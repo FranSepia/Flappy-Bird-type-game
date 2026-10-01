@@ -23,7 +23,32 @@ const BALL_R = 14
 const GIRL_SCALE = 64 / 235   // 1 px del sprite = 0.27 px del juego
 const GIRL_ANCHOR_X = 0.634  // posición del cuerpo dentro del sprite (la estela queda atrás)
 const GIRL_ANCHOR_Y = 0.5024
-const COLLECT_R = BALL_R + 12
+
+// ─── HITBOXES ─────────────────────────────────────────────────────────────────
+// Círculos [dx, dy, r] que siguen la silueta del sprite, relativos al ancla (x, y).
+// Se rotan igual que el sprite. Usa ?debug en la URL para verlos dibujados.
+const HIT_CIRCLES = {
+  bird:  [[22, -9, 8], [-2, -17, 6], [8, 6, 10], [-8, 10, 7], [-14, 19, 5]],
+  quetz: [[-18, 0, 10], [0, 0, 11], [18, 0, 10]],
+}
+const TILT = { bird: 0.06, quetz: 0.05 }
+const DEBUG = typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug')
+
+function hitCircles(char, x, y, vel) {
+  const a = Math.min(Math.max(vel, -5), 5) * TILT[char]
+  const cos = Math.cos(a), sin = Math.sin(a)
+  return HIT_CIRCLES[char].map(([dx, dy, r]) => ({
+    x: x + dx * cos - dy * sin,
+    y: y + dx * sin + dy * cos,
+    r,
+  }))
+}
+
+function circleHitsRect(c, rx, ry, rw, rh) {
+  const nx = Math.max(rx, Math.min(c.x, rx + rw))
+  const ny = Math.max(ry, Math.min(c.y, ry + rh))
+  return (c.x - nx) ** 2 + (c.y - ny) ** 2 < c.r * c.r
+}
 
 // ─── IMAGE LOADER ─────────────────────────────────────────────────────────────
 
@@ -668,7 +693,6 @@ export default function FlappyBird() {
       { x: 190, y: 55,  s: 0.8 },
       { x: 260, y: 100, s: 0.7 },
     ],
-    poops: [],
     fireworksTimer: 0,
     particles: [],
     rainbowBirdTimer: 0,
@@ -689,35 +713,30 @@ export default function FlappyBird() {
     return { x: W + 10, topH }
   }, [])
 
-  const checkCollision = useCallback((birdY, pipes) => {
-    const bx = BIRD_X
-    const by = birdY
-    const br = BIRD_R - 5  // hitbox ligeramente menor al visual
-
-    const CAP_H = 26
+  const checkCollision = useCallback((birdY, vel, char, pipes) => {
+    const circles = hitCircles(char, BIRD_X, birdY, vel)
     const CAP_W = PIPE_W + 10
 
     // Suelo / techo
-    if (by - br <= 0 || by + br >= GROUND_Y) return { hit: true, type: 'normal' }
+    if (circles.some(c => c.y - c.r <= 0 || c.y + c.r >= GROUND_Y)) return { hit: true, type: 'normal' }
 
     for (const p of pipes) {
-      const bodyX    = p.x + 5
-      const bodyRight = bodyX + PIPE_W
-      const capX     = p.x
-      const capRight  = capX + CAP_W
+      const bodyX = p.x + 5
+      const capX = p.x
+      const botY = p.topH + PIPE_GAP
+      const isCentered = BIRD_X > capX + 5 && BIRD_X < capX + CAP_W - 5
 
-      const overlapBody = bx + br > bodyX && bx - br < bodyRight
-      const overlapCap  = bx + br > capX  && bx - br < capRight
+      // Edificio de arriba: cuerpo + cornisa
+      const top = [[bodyX, -100, PIPE_W, p.topH + 100], [capX, p.topH, CAP_W, CROWN_H]]
+      // Edificio de abajo: cornisa + cuerpo
+      const bottom = [[capX, botY - CROWN_H, CAP_W, CROWN_H], [bodyX, botY, PIPE_W, H]]
 
-      const isCentered = bx > capX + 5 && bx < capRight - 5
-
-      // Tubo de arriba
-      if (overlapBody && by - br < p.topH) return { hit: true, type: isCentered ? 'enter_top' : 'normal', pipe: p }
-      if (overlapCap  && by - br < p.topH + CAP_H) return { hit: true, type: isCentered ? 'enter_top' : 'normal', pipe: p }
-
-      // Tubo de abajo
-      if (overlapBody && by + br > p.topH + PIPE_GAP) return { hit: true, type: isCentered ? 'enter_bottom' : 'normal', pipe: p }
-      if (overlapCap  && by + br > p.topH + PIPE_GAP - CAP_H) return { hit: true, type: isCentered ? 'enter_bottom' : 'normal', pipe: p }
+      if (circles.some(c => top.some(r => circleHitsRect(c, ...r)))) {
+        return { hit: true, type: isCentered ? 'enter_top' : 'normal', pipe: p }
+      }
+      if (circles.some(c => bottom.some(r => circleHitsRect(c, ...r)))) {
+        return { hit: true, type: isCentered ? 'enter_bottom' : 'normal', pipe: p }
+      }
     }
     return { hit: false }
   }, [])
@@ -738,13 +757,11 @@ export default function FlappyBird() {
     if (s.phase === 'start') {
       s.phase = 'playing'
       s.birdVel = JUMP_VEL
-      if (s.poops) s.poops.push({ x: BIRD_X - 10, y: s.birdY, velY: -1, velX: 1 })
       pipeTimerRef.current = 0
       return
     }
     if (s.phase === 'playing') {
       s.birdVel = JUMP_VEL
-      if (s.poops) s.poops.push({ x: BIRD_X - 10, y: s.birdY, velY: -1, velX: 1 })
     }
     if (s.phase === 'dead' && s.deadTimer > 60) {
       const best = s.best
@@ -816,10 +833,11 @@ export default function FlappyBird() {
         s.pipes.forEach(p => { p.x -= speed })
         s.pipes = s.pipes.filter(p => p.x > -80)
 
+        const hc = hitCircles(s.character, BIRD_X, s.birdY, s.birdVel)
         s.pipes.forEach(p => {
           const ballX = p.x + 5 + PIPE_W / 2
           const ballY = p.topH + PIPE_GAP / 2
-          if (!p.collected && Math.hypot(ballX - BIRD_X, ballY - s.birdY) < COLLECT_R) {
+          if (!p.collected && hc.some(c => Math.hypot(ballX - c.x, ballY - c.y) < c.r + BALL_R)) {
             p.collected = true
             for (let i = 0; i < 14; i++) {
               const a = Math.random() * Math.PI * 2
@@ -845,7 +863,7 @@ export default function FlappyBird() {
           }
         })
 
-        const col = checkCollision(s.birdY, s.pipes)
+        const col = checkCollision(s.birdY, s.birdVel, s.character, s.pipes)
         if (col.hit) {
           if (col.type === 'enter_bottom' || col.type === 'enter_top') {
             // Alinear la tubería perfectamente al centro horizontal del pájaro
@@ -885,7 +903,7 @@ export default function FlappyBird() {
         s.deadTimer++
         if (!s.isHidden) {
           s.birdVel += GRAVITY
-          s.birdY = Math.min(s.birdY + s.birdVel, GROUND_Y - BIRD_R)
+          s.birdY = Math.min(s.birdY + s.birdVel, GROUND_Y - 24)
         }
       }
 
@@ -935,14 +953,6 @@ export default function FlappyBird() {
           c.x -= 0.5
           if (c.x < -80) c.x = W + 80
         })
-        if (s.poops) {
-          s.poops.forEach(p => {
-            p.x -= speed - p.velX
-            p.velY += GRAVITY * 0.8
-            p.y += p.velY
-          })
-          s.poops = s.poops.filter(p => p.y < H && p.x > -20)
-        }
       }
 
       s.wingTimer += dt
@@ -995,17 +1005,6 @@ export default function FlappyBird() {
         if (!p.collected) drawBall(ctx, p.x + 5 + PIPE_W / 2, p.topH + PIPE_GAP / 2, p.n)
       })
 
-      if (s.poops) {
-        s.poops.forEach(p => {
-          ctx.fillStyle = '#ffffff'
-          ctx.beginPath()
-          ctx.arc(p.x, p.y, 4, 0, Math.PI * 2)
-          ctx.arc(p.x, p.y - 3, 2.5, 0, Math.PI * 2)
-          ctx.arc(p.x, p.y - 5.5, 1.2, 0, Math.PI * 2)
-          ctx.fill()
-        })
-      }
-
       ctx.save()
       if (s.rainbowBirdTimer && s.rainbowBirdTimer > 0) {
         ctx.filter = `hue-rotate(${(Date.now() / 4) % 360}deg) saturate(200%)`
@@ -1038,6 +1037,25 @@ export default function FlappyBird() {
         ctx.restore()
 
         drawScore(ctx, s.score)
+      }
+
+      if (DEBUG && s.phase !== 'select') {
+        ctx.strokeStyle = '#00ff66'
+        ctx.lineWidth = 1
+        hitCircles(s.character, BIRD_X, s.birdY, s.birdVel).forEach(c => {
+          ctx.beginPath()
+          ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2)
+          ctx.stroke()
+        })
+        s.pipes.forEach(p => {
+          ctx.strokeRect(p.x + 5, 0, PIPE_W, p.topH)
+          ctx.strokeRect(p.x, p.topH, PIPE_W + 10, CROWN_H)
+          ctx.strokeRect(p.x, p.topH + PIPE_GAP - CROWN_H, PIPE_W + 10, CROWN_H)
+          ctx.strokeRect(p.x + 5, p.topH + PIPE_GAP, PIPE_W, H)
+          ctx.beginPath()
+          ctx.arc(p.x + 5 + PIPE_W / 2, p.topH + PIPE_GAP / 2, BALL_R, 0, Math.PI * 2)
+          ctx.stroke()
+        })
       }
 
       if (s.phase === 'dead' && s.deadTimer > 30) {
