@@ -11,6 +11,8 @@ const JUMP_VEL = -9
 const PIPE_SPEED = 2.5
 const PIPE_W = 52
 const PIPE_GAP = 206
+const EASY_GAP = 256     // hueco más grande en los primeros obstáculos
+const EASY_COUNT = 10
 const PIPE_INTERVAL = 1500
 
 const BIRD_X = 72
@@ -33,6 +35,7 @@ const HIT_CIRCLES = {
 const TILT = { bird: 0.06 }
 const QUERY = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams()
 const DEBUG = QUERY.has('debug')
+const DEBUG_GOD = DEBUG && QUERY.has('god')         // ?debug&god: sin colisiones
 const DEBUG_SKIP = DEBUG ? Number(QUERY.get('skip')) || 0 : 0  // ?debug&skip=10 salta al tema siguiente
 
 function hitCircles(char, x, y, vel) {
@@ -43,6 +46,27 @@ function hitCircles(char, x, y, vel) {
     y: y + dx * sin + dy * cos,
     r,
   }))
+}
+
+// Animación de cambio de tema: slide 0 = en su lugar, 1 = fuera de pantalla.
+// Los edificios de arriba suben/bajan por arriba y los de abajo por abajo.
+const ENTER_MS = 1000
+const EXIT_MS = 800
+const easeOut = (t) => 1 - (1 - t) ** 3
+const easeIn = (t) => t ** 3
+
+function slideOffsets(p) {
+  const slide = p.slide || 0
+  return {
+    top: -slide * (p.topH + CROWN_H),
+    bottom: slide * (H - (p.topH + p.gap - CROWN_H)),
+  }
+}
+
+function updateSlide(p, dt) {
+  if (p.enterT < 1) p.enterT = Math.min(1, p.enterT + dt / ENTER_MS)
+  if (p.exiting) p.exitT = Math.min(1, p.exitT + dt / EXIT_MS)
+  p.slide = Math.max(1 - easeOut(p.enterT), easeIn(p.exitT))
 }
 
 function circleHitsRect(c, rx, ry, rw, rh) {
@@ -428,28 +452,31 @@ function drawCloudCanvas(ctx, x, y, s) {
   ctx.fillRect(x + 3 * u, y - u, 2 * u, u)
 }
 
-function drawBuilding(ctx, imgs, p, gap) {
+function drawBuilding(ctx, imgs, p) {
   const theme = p.theme || 0
   const texW = PIPE_W + 10
   const x = Math.round(p.x)
-  const botY = p.topH + gap - CROWN_H
-  const topBottom = p.topH + CROWN_H
+  const off = slideOffsets(p)
+  const botY = Math.round(p.topH + p.gap - CROWN_H + off.bottom)
+  const topBottom = Math.round(p.topH + CROWN_H + off.top)
+  const topH = p.topH + CROWN_H   // alto del edificio de arriba
+  const botH = H - (p.topH + p.gap - CROWN_H)
   ctx.imageSmoothingEnabled = false
 
   if (theme === 0) {
     const tex = getAssets().buildings[p.n % 3]
     // Edificio de abajo (cornisa arriba)
-    ctx.drawImage(tex, 0, 0, texW, H - botY, x, botY, texW, H - botY)
+    ctx.drawImage(tex, 0, 0, texW, botH, x, botY, texW, botH)
     // Edificio de arriba (volteado para que la cornisa quede abajo)
     ctx.save()
     ctx.translate(x, topBottom)
     ctx.scale(1, -1)
-    ctx.drawImage(tex, 0, 0, texW, topBottom, 0, 0, texW, topBottom)
+    ctx.drawImage(tex, 0, 0, texW, topH, 0, 0, texW, topH)
     ctx.restore()
   } else {
     const t = getThemeTextures(theme, p.n % 3)
-    ctx.drawImage(t.up, 0, 0, texW, H - botY, x, botY, texW, H - botY)
-    ctx.drawImage(t.down, 0, H - topBottom, texW, topBottom, x, 0, texW, topBottom)
+    ctx.drawImage(t.up, 0, 0, texW, botH, x, botY, texW, botH)
+    ctx.drawImage(t.down, 0, H - topH, texW, topH, x, topBottom - topH, texW, topH)
   }
   ctx.imageSmoothingEnabled = true
 
@@ -458,7 +485,7 @@ function drawBuilding(ctx, imgs, p, gap) {
     const lw = 46
     const lh = Math.round(lw * logo.height / logo.width)
     const lx = x + 5 + (PIPE_W - lw) / 2
-    ctx.drawImage(logo, lx, p.topH - 4 - lh, lw, lh)
+    ctx.drawImage(logo, lx, p.topH + off.top - 4 - lh, lw, lh)
     ctx.drawImage(logo, lx, botY + CROWN_H + 4, lw, lh)
   }
 }
@@ -731,14 +758,16 @@ export default function FlappyBird() {
     bgX: 0,
   }), [])
 
-  const spawnPipe = useCallback(() => {
+  const spawnPipe = useCallback((n) => {
+    const gap = n <= EASY_COUNT ? EASY_GAP : PIPE_GAP
     const minTopH = 60
-    const maxTopH = GROUND_Y - PIPE_GAP - 60
+    const maxTopH = GROUND_Y - gap - 60
     const topH = Math.floor(Math.random() * (maxTopH - minTopH)) + minTopH
-    return { x: W + 10, topH }
+    return { x: W + 10, topH, gap, slide: 0, enterT: 1, exitT: 0, exiting: false }
   }, [])
 
   const checkCollision = useCallback((birdY, vel, char, pipes) => {
+    if (DEBUG_GOD) return { hit: false }
     const circles = hitCircles(char, BIRD_X, birdY, vel)
     const CAP_W = PIPE_W + 10
 
@@ -748,13 +777,14 @@ export default function FlappyBird() {
     for (const p of pipes) {
       const bodyX = p.x + 5
       const capX = p.x
-      const botY = p.topH + PIPE_GAP
+      const botY = p.topH + p.gap
+      const off = slideOffsets(p)
       const isCentered = BIRD_X > capX + 5 && BIRD_X < capX + CAP_W - 5
 
       // Edificio de arriba: cuerpo + cornisa
-      const top = [[bodyX, -100, PIPE_W, p.topH + 100], [capX, p.topH, CAP_W, CROWN_H]]
+      const top = [[bodyX, -100 + off.top, PIPE_W, p.topH + 100], [capX, p.topH + off.top, CAP_W, CROWN_H]]
       // Edificio de abajo: cornisa + cuerpo
-      const bottom = [[capX, botY - CROWN_H, CAP_W, CROWN_H], [bodyX, botY, PIPE_W, H]]
+      const bottom = [[capX, botY - CROWN_H + off.bottom, CAP_W, CROWN_H], [bodyX, botY + off.bottom, PIPE_W, H]]
 
       if (circles.some(c => top.some(r => circleHitsRect(c, ...r)))) {
         return { hit: true, type: isCentered ? 'enter_top' : 'normal', pipe: p }
@@ -839,20 +869,26 @@ export default function FlappyBird() {
 
         pipeTimerRef.current += dt
         if (pipeTimerRef.current >= PIPE_INTERVAL) {
-          const np = spawnPipe()
+          const np = spawnPipe(s.pipeCount + 1)
           np.n = ++s.pipeCount
           np.theme = Math.floor((np.n - 1) / THEME_EVERY) % THEME_COUNT
           np.ballColor = Math.floor(Math.random() * BALL_COLORS.length)
+          if (np.n > 1 && (np.n - 1) % THEME_EVERY === 0) {
+            // Cambio de tema: los actuales se van y el nuevo entra
+            s.pipes.forEach(o => { o.exiting = true })
+            np.enterT = 0
+            np.slide = 1
+          }
           s.pipes.push(np)
           pipeTimerRef.current = 0
         }
-        s.pipes.forEach(p => { p.x -= speed })
+        s.pipes.forEach(p => { p.x -= speed; updateSlide(p, dt) })
         s.pipes = s.pipes.filter(p => p.x > -80)
 
         const hc = hitCircles(s.character, BIRD_X, s.birdY, s.birdVel)
         s.pipes.forEach(p => {
           const ballX = p.x + 5 + PIPE_W / 2
-          const ballY = p.topH + PIPE_GAP / 2
+          const ballY = p.topH + p.gap / 2
           if (!p.collected && hc.some(c => Math.hypot(ballX - c.x, ballY - c.y) < c.r + BALL_R)) {
             p.collected = true
             for (let i = 0; i < 14; i++) {
@@ -1009,8 +1045,8 @@ export default function FlappyBird() {
       drawGround(ctx, s.groundX)
 
       s.pipes.forEach(p => {
-        drawBuilding(ctx, imgs, p, PIPE_GAP)
-        if (!p.collected) drawBall(ctx, p.x + 5 + PIPE_W / 2, p.topH + PIPE_GAP / 2, p.n, BALL_COLORS[p.ballColor])
+        drawBuilding(ctx, imgs, p)
+        if (!p.collected) drawBall(ctx, p.x + 5 + PIPE_W / 2, p.topH + p.gap / 2, p.n, BALL_COLORS[p.ballColor])
       })
 
       ctx.save()
@@ -1043,12 +1079,13 @@ export default function FlappyBird() {
           ctx.stroke()
         })
         s.pipes.forEach(p => {
-          ctx.strokeRect(p.x + 5, 0, PIPE_W, p.topH)
-          ctx.strokeRect(p.x, p.topH, PIPE_W + 10, CROWN_H)
-          ctx.strokeRect(p.x, p.topH + PIPE_GAP - CROWN_H, PIPE_W + 10, CROWN_H)
-          ctx.strokeRect(p.x + 5, p.topH + PIPE_GAP, PIPE_W, H)
+          const off = slideOffsets(p)
+          ctx.strokeRect(p.x + 5, off.top, PIPE_W, p.topH)
+          ctx.strokeRect(p.x, p.topH + off.top, PIPE_W + 10, CROWN_H)
+          ctx.strokeRect(p.x, p.topH + p.gap - CROWN_H + off.bottom, PIPE_W + 10, CROWN_H)
+          ctx.strokeRect(p.x + 5, p.topH + p.gap + off.bottom, PIPE_W, H)
           ctx.beginPath()
-          ctx.arc(p.x + 5 + PIPE_W / 2, p.topH + PIPE_GAP / 2, BALL_R, 0, Math.PI * 2)
+          ctx.arc(p.x + 5 + PIPE_W / 2, p.topH + p.gap / 2, BALL_R, 0, Math.PI * 2)
           ctx.stroke()
         })
       }
