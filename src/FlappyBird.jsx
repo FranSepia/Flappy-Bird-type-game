@@ -20,6 +20,10 @@ const SCALE = 3          // resolución interna (nitidez), la lógica sigue en W
 const FONT = '"Press Start 2P", "Courier New", monospace'
 const CROWN_H = 26       // alto de la cornisa del edificio (igual que la colisión)
 const BALL_R = 14
+const GIRL_SCALE = 64 / 235   // 1 px del sprite = 0.27 px del juego
+const GIRL_ANCHOR_X = 0.634  // posición del cuerpo dentro del sprite (la estela queda atrás)
+const GIRL_ANCHOR_Y = 0.5024
+const COLLECT_R = BALL_R + 12
 
 // ─── IMAGE LOADER ─────────────────────────────────────────────────────────────
 
@@ -384,12 +388,13 @@ function drawBirdImg(ctx, imgs, x, y, vel) {
   const img = imgs['bird']
   if (!img) return
 
-  const w = 64
-  const h = Math.round(w * img.height / img.width)
+  // El sprite incluye la estela completa; (x, y) queda sobre el cuerpo de la chava
+  const w = img.width * GIRL_SCALE
+  const h = img.height * GIRL_SCALE
   ctx.save()
   ctx.translate(x, y)
   ctx.rotate(angle)
-  ctx.drawImage(img, -w / 2, -h / 2, w, h)
+  ctx.drawImage(img, -w * GIRL_ANCHOR_X, -h * GIRL_ANCHOR_Y, w, h)
   ctx.restore()
 }
 
@@ -569,7 +574,7 @@ function drawCharacterSelect(ctx, time, imgs) {
   drawPanel(ctx, 30, 220, 110, 130, 8)
   neonText(ctx, 'FLAPPY', 85, 335, 10, '#ffd23f', '#ff8c1a')
   if (imgs['bird']) {
-    drawBirdImg(ctx, imgs, 85, 275, 0)
+    drawBirdImg(ctx, imgs, 100, 275, 0)
   } else {
     drawBirdCanvas(ctx, 85, 275, 0, Math.floor((time / 150) % 3))
   }
@@ -812,9 +817,20 @@ export default function FlappyBird() {
         s.pipes = s.pipes.filter(p => p.x > -80)
 
         s.pipes.forEach(p => {
-          const mid = p.x + 5 + PIPE_W / 2
-          if (!s.scored.has(p) && mid < BIRD_X) {
-            s.scored.add(p)
+          const ballX = p.x + 5 + PIPE_W / 2
+          const ballY = p.topH + PIPE_GAP / 2
+          if (!p.collected && Math.hypot(ballX - BIRD_X, ballY - s.birdY) < COLLECT_R) {
+            p.collected = true
+            for (let i = 0; i < 14; i++) {
+              const a = Math.random() * Math.PI * 2
+              const v = Math.random() * 2 + 1
+              s.particles.push({
+                x: ballX, y: ballY,
+                vx: Math.cos(a) * v, vy: Math.sin(a) * v,
+                color: i % 2 ? '#ff3b3b' : '#ffffff',
+                life: 0.6
+              })
+            }
             s.score++
             if (s.score === 10 || (s.score % 100 === 0 && s.score >= 100)) {
               s.fireworksTimer = 3000
@@ -972,9 +988,11 @@ export default function FlappyBird() {
         ctx.restore()
       }
 
+      drawGround(ctx, s.groundX)
+
       s.pipes.forEach(p => {
         drawBuilding(ctx, imgs, p, PIPE_GAP)
-        drawBall(ctx, p.x + 5 + PIPE_W / 2, p.topH + PIPE_GAP / 2, p.n)
+        if (!p.collected) drawBall(ctx, p.x + 5 + PIPE_W / 2, p.topH + PIPE_GAP / 2, p.n)
       })
 
       if (s.poops) {
@@ -987,8 +1005,6 @@ export default function FlappyBird() {
           ctx.fill()
         })
       }
-
-      drawGround(ctx, s.groundX)
 
       ctx.save()
       if (s.rainbowBirdTimer && s.rainbowBirdTimer > 0) {
