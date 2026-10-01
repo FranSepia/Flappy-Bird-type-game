@@ -339,73 +339,6 @@ function drawBall(ctx, x, y, n) {
   ctx.textBaseline = 'alphabetic'
 }
 
-// ─── CANVAS FALLBACK BIRD (used when the sprite is missing) ───────────────────
-
-function drawBirdCanvas(ctx, x, y, vel, wingFrame) {
-  const r = BIRD_R
-  const angle = Math.min(Math.max(vel * 0.06, -0.5), 1.2)
-  ctx.save()
-  ctx.translate(x, y)
-  ctx.rotate(angle)
-
-  const wingY = wingFrame === 0 ? 4 : wingFrame === 1 ? 0 : -6
-  ctx.fillStyle = '#f0c030'
-  ctx.beginPath()
-  ctx.ellipse(-4, wingY, 10, 7, -0.3, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.strokeStyle = '#c89010'
-  ctx.lineWidth = 1.5
-  ctx.stroke()
-
-  const bodyGrad = ctx.createRadialGradient(-4, -4, 2, 0, 0, r)
-  bodyGrad.addColorStop(0, '#fce860')
-  bodyGrad.addColorStop(0.6, '#f5d33b')
-  bodyGrad.addColorStop(1, '#d4a017')
-  ctx.fillStyle = bodyGrad
-  ctx.beginPath()
-  ctx.arc(0, 0, r, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.strokeStyle = '#b07a0a'
-  ctx.lineWidth = 2
-  ctx.stroke()
-
-  ctx.fillStyle = '#fce8a0'
-  ctx.beginPath()
-  ctx.ellipse(4, 5, 9, 7, 0.3, 0, Math.PI * 2)
-  ctx.fill()
-
-  ctx.fillStyle = '#fff'
-  ctx.beginPath()
-  ctx.arc(8, -5, 7, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.strokeStyle = '#333'
-  ctx.lineWidth = 1.5
-  ctx.stroke()
-
-  ctx.fillStyle = '#1a0a00'
-  ctx.beginPath()
-  ctx.arc(10, -5, 3.5, 0, Math.PI * 2)
-  ctx.fill()
-
-  ctx.fillStyle = '#fff'
-  ctx.beginPath()
-  ctx.arc(11.5, -6.5, 1.5, 0, Math.PI * 2)
-  ctx.fill()
-
-  ctx.fillStyle = '#f87327'
-  ctx.beginPath()
-  ctx.moveTo(12, -1)
-  ctx.lineTo(22, 1)
-  ctx.lineTo(12, 4)
-  ctx.closePath()
-  ctx.fill()
-  ctx.strokeStyle = '#c45010'
-  ctx.lineWidth = 1
-  ctx.stroke()
-
-  ctx.restore()
-}
-
 // ─── IMAGE-BASED DRAWERS ──────────────────────────────────────────────────────
 
 function drawBirdImg(ctx, imgs, x, y, vel) {
@@ -598,11 +531,7 @@ function drawCharacterSelect(ctx, time, imgs) {
   // Izquierda: X center = 85
   drawPanel(ctx, 30, 220, 110, 130, 8)
   neonText(ctx, 'FLAPPY', 85, 335, 10, '#ffd23f', '#ff8c1a')
-  if (imgs['bird']) {
-    drawBirdImg(ctx, imgs, 100, 275, 0)
-  } else {
-    drawBirdCanvas(ctx, 85, 275, 0, Math.floor((time / 150) % 3))
-  }
+  drawBirdImg(ctx, imgs, 100, 275, 0)
 
   // Derecha: X center = 235
   drawPanel(ctx, 180, 220, 110, 130, 8)
@@ -778,12 +707,13 @@ export default function FlappyBird() {
       logo:      '/assets/retro/logo_banner.png',
       quetz:     '/assets/Quetzal sin fondo.jpg',
     }
-    Promise.all(
-      keys.map(k => loadImage(paths[k], k === 'quetz').then(img => [k, img]))
-    ).then(entries => {
-      entries.forEach(([k, img]) => {
-        if (img) imgsRef.current[k] = img
-      })
+    keys.forEach(async (k) => {
+      // Reintenta: por un túnel o red lenta alguna petición puede fallar
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const img = await loadImage(paths[k], k === 'quetz')
+        if (img) { imgsRef.current[k] = img; return }
+        await new Promise(r => setTimeout(r, 500 * (attempt + 1)))
+      }
     })
   }, [])
 
@@ -989,11 +919,7 @@ export default function FlappyBird() {
         if (s.character === 'quetz') {
           drawQuetzalImg(ctx, imgs, BIRD_X, s.birdY, Math.min(Math.max(s.birdVel, -5), 5), Date.now())
         } else {
-          if (imgs['bird']) {
-            drawBirdImg(ctx, imgs, BIRD_X, s.birdY, Math.min(Math.max(s.birdVel, -5), 5))
-          } else {
-            drawBirdCanvas(ctx, BIRD_X, s.birdY, Math.min(Math.max(s.birdVel, -5), 5), s.wingFrame)
-          }
+          drawBirdImg(ctx, imgs, BIRD_X, s.birdY, Math.min(Math.max(s.birdVel, -5), 5))
         }
         ctx.restore()
       }
@@ -1014,11 +940,7 @@ export default function FlappyBird() {
         if (char === 'quetz') {
           drawQuetzalImg(ctx, imgs, x, y, vel, globalTime || Date.now())
         } else {
-          if (imgs['bird']) {
-            drawBirdImg(ctx, imgs, x, y, vel)
-          } else {
-            drawBirdCanvas(ctx, x, y, vel, wFrame)
-          }
+          drawBirdImg(ctx, imgs, x, y, vel)
         }
       }
 
