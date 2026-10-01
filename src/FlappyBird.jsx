@@ -29,10 +29,11 @@ const GIRL_ANCHOR_Y = 0.5024
 // Se rotan igual que el sprite. Usa ?debug en la URL para verlos dibujados.
 const HIT_CIRCLES = {
   bird:  [[22, -9, 8], [-2, -17, 6], [8, 6, 10], [-8, 10, 7], [-14, 19, 5]],
-  quetz: [[-18, 0, 10], [0, 0, 11], [18, 0, 10]],
 }
-const TILT = { bird: 0.06, quetz: 0.05 }
-const DEBUG = typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug')
+const TILT = { bird: 0.06 }
+const QUERY = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams()
+const DEBUG = QUERY.has('debug')
+const DEBUG_SKIP = DEBUG ? Number(QUERY.get('skip')) || 0 : 0  // ?debug&skip=10 salta al tema siguiente
 
 function hitCircles(char, x, y, vel) {
   const a = Math.min(Math.max(vel, -5), 5) * TILT[char]
@@ -52,42 +53,10 @@ function circleHitsRect(c, rx, ry, rw, rh) {
 
 // ─── IMAGE LOADER ─────────────────────────────────────────────────────────────
 
-function loadImage(src, removeBg = false) {
+function loadImage(src) {
   return new Promise((resolve) => {
     const img = new Image()
-    img.crossOrigin = 'Anonymous'
-    img.onload = () => {
-      if (!removeBg) return resolve(img)
-      
-      const canvas = document.createElement('canvas')
-      canvas.width = img.width
-      canvas.height = img.height
-      const ctx = canvas.getContext('2d', { willReadFrequently: true })
-      ctx.drawImage(img, 0, 0)
-      
-      try {
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-        const data = imageData.data
-        const bgR = data[0], bgG = data[1], bgB = data[2]
-        
-        for (let i = 0; i < data.length; i += 4) {
-          const r = data[i], g = data[i+1], b = data[i+2]
-          // Eliminar fondo blanco (con mucha mayor tolerancia) para matar bordes o píxeles sueltos
-          if (r > 200 && g > 200 && b > 200) {
-            data[i+3] = 0 
-          } else if (Math.abs(r - bgR) + Math.abs(g - bgG) + Math.abs(b - bgB) < 90) {
-            data[i+3] = 0 
-          }
-        }
-        ctx.putImageData(imageData, 0, 0)
-        
-        const transparentImg = new Image()
-        transparentImg.onload = () => resolve(transparentImg)
-        transparentImg.src = canvas.toDataURL('image/png')
-      } catch(e) {
-        resolve(img)
-      }
-    }
+    img.onload = () => resolve(img)
     img.onerror = () => resolve(null)
     img.src = src
   })
@@ -156,6 +125,193 @@ function buildBuildingTexture(seed) {
   }
   return c
 }
+
+// ─── OBSTACLE THEMES (cambian cada 10 obstáculos): 0 edificios, 1 papeleo, 2 reloj ──
+
+const THEME_EVERY = 10
+const THEME_COUNT = 3
+
+// Pinta en coordenadas "distancia al borde del hueco" (d). Si flip=true la textura
+// queda con la cornisa abajo (edificio de arriba), pero los dibujos siguen derechos.
+function makePainter(g, flip) {
+  const Y = (d, h = 0) => (flip ? H - d - h : d)
+  const cy = (d) => (flip ? H - d : d)
+  return {
+    g, Y, cy,
+    rect(x, d, w, h, color) { g.fillStyle = color; g.fillRect(x, Y(d, h), w, h) },
+    circle(cx, d, r, color) {
+      g.fillStyle = color
+      g.beginPath()
+      g.arc(cx, cy(d), r, 0, Math.PI * 2)
+      g.fill()
+    },
+    poly(pts, color) {
+      g.fillStyle = color
+      g.beginPath()
+      pts.forEach(([x, d], i) => (i ? g.lineTo(x, cy(d)) : g.moveTo(x, cy(d))))
+      g.closePath()
+      g.fill()
+    },
+    text(str, cx, d, size, color) {
+      g.font = `bold ${size}px "Courier New", monospace`
+      g.textAlign = 'center'
+      g.textBaseline = 'top'
+      g.fillStyle = color
+      g.fillText(str, cx, Y(d, size))
+    },
+  }
+}
+
+function buildPaperTexture(seed, flip) {
+  const rnd = mulberry32(seed)
+  const c = makeCanvas(PIPE_W + 10, H)
+  const P = makePainter(c.getContext('2d'), flip)
+  const papers = ['#e9e0c6', '#d8ccab', '#f4efdd']
+
+  P.rect(5, CROWN_H, PIPE_W, H - CROWN_H, '#8d8368')
+  for (let d = CROWN_H; d < H;) {
+    const th = 5 + Math.floor(rnd() * 4)
+    const x = 5 + Math.floor(rnd() * 5) - 2
+    P.rect(x, d, PIPE_W, th, papers[Math.floor(rnd() * papers.length)])
+    P.rect(x, d + th - 1, PIPE_W, 1, '#a89b78')
+    if (rnd() < 0.5) {
+      for (let k = 0; k < 3; k++) P.rect(x + 4 + k * 15, d + 2, 7 + Math.floor(rnd() * 6), 1, '#9a947c')
+    }
+    d += th
+  }
+  P.rect(5, CROWN_H, 3, H - CROWN_H, 'rgba(255,255,255,0.25)')
+  P.rect(53, CROWN_H, 4, H - CROWN_H, 'rgba(60,40,10,0.35)')
+
+  // Cintas rojas con "RED TAPE" + formularios / sellos
+  let seg = 0
+  for (let ty = CROWN_H + 26 + rnd() * 20; ty < H - 30; ty += 78 + rnd() * 24, seg++) {
+    const s = rnd() < 0.5 ? 5 : -5
+    P.poly([[3, ty], [59, ty + s], [59, ty + s + 10], [3, ty + 10]], '#c8202a')
+    P.poly([[3, ty + 10], [59, ty + s + 10], [59, ty + s + 12], [3, ty + 12]], '#6e0f16')
+    P.poly([[3, ty], [59, ty + s], [59, ty + s + 1], [3, ty + 1]], '#ff6a6a')
+    P.text('RED TAPE', 31, ty + 2 + s / 2, 7, '#ffe6e6')
+
+    const fd = ty + 24
+    if (seg % 2 === 0) {
+      const fx = 10 + Math.floor(rnd() * 12)
+      P.rect(fx - 1, fd - 1, 32, 36, '#8d8870')
+      P.rect(fx, fd, 30, 34, '#f8f6ee')
+      P.text('FORM 104', fx + 15, fd + 3, 5, '#333333')
+      P.rect(fx + 4, fd + 12, 6, 6, '#6b6b6b'); P.rect(fx + 5, fd + 13, 4, 4, '#ffffff')
+      P.rect(fx + 4, fd + 21, 6, 6, '#6b6b6b'); P.rect(fx + 5, fd + 22, 4, 4, '#ffffff')
+      P.rect(fx + 13, fd + 13, 12, 1, '#9a947c'); P.rect(fx + 13, fd + 22, 12, 1, '#9a947c')
+      P.rect(fx + 20, fd + 25, 8, 8, '#c8202a'); P.rect(fx + 21, fd + 26, 6, 6, '#ffffff')
+      P.text('X', fx + 24, fd + 26, 6, '#c8202a')
+    } else {
+      P.rect(8, fd + 4, 46, 13, '#b3202a')
+      P.rect(10, fd + 6, 42, 9, '#f0e6c8')
+      P.text('APPROVED', 31, fd + 8, 6, '#b3202a')
+    }
+  }
+
+  // Cornisa: pila ancha de papeles con cinta
+  for (let k = 0; k < 4; k++) {
+    P.rect(0, k * 6, PIPE_W + 10, 5, k % 2 ? '#e9e0c6' : '#f4efdd')
+    P.rect(0, k * 6 + 5, PIPE_W + 10, 1, '#a89b78')
+  }
+  P.rect(0, 0, PIPE_W + 10, 2, '#ffffff')
+  P.rect(0, 10, PIPE_W + 10, 6, '#c8202a')
+  P.rect(0, 16, PIPE_W + 10, 1, '#6e0f16')
+  P.rect(0, 22, PIPE_W + 10, 4, '#8d8368')
+  return c
+}
+
+function drawGear(P, gx, d, r, color) {
+  const g = P.g
+  const cy = P.cy(d)
+  g.fillStyle = color
+  for (let k = 0; k < 8; k++) {
+    const a = (k / 8) * Math.PI * 2
+    g.fillRect(Math.round(gx + Math.cos(a) * (r + 1) - 1.5), Math.round(cy + Math.sin(a) * (r + 1) - 1.5), 3, 3)
+  }
+  P.circle(gx, d, r, color)
+  P.circle(gx, d, r * 0.55, 'rgba(40,20,5,0.45)')
+  P.circle(gx, d, 2, '#2a1505')
+}
+
+function buildClockTexture(seed, flip) {
+  const rnd = mulberry32(seed)
+  const c = makeCanvas(PIPE_W + 10, H)
+  const P = makePainter(c.getContext('2d'), flip)
+  const g = P.g
+
+  P.rect(5, CROWN_H, PIPE_W, H - CROWN_H, '#6e4210')
+  P.rect(5, CROWN_H, 3, H - CROWN_H, '#d9a441')
+  P.rect(5, CROWN_H, 1, H - CROWN_H, '#f6d27a')
+  P.rect(53, CROWN_H, 4, H - CROWN_H, '#3d2208')
+  for (let d = CROWN_H + 7; d < H; d += 14) {
+    for (let x = 12; x < 52; x += 8) P.rect(x, d, 2, 2, '#c88a2a')
+  }
+  P.rect(11, CROWN_H, 4, H - CROWN_H, '#b5651d'); P.rect(11, CROWN_H, 1, H - CROWN_H, '#e08a3c')
+  P.rect(47, CROWN_H, 4, H - CROWN_H, '#b5651d'); P.rect(47, CROWN_H, 1, H - CROWN_H, '#e08a3c')
+
+  // Engranajes y relojes con cara de enojo
+  const gearColors = ['#d9a441', '#c0392b', '#b5651d']
+  for (let d = CROWN_H + 8; d < H;) {
+    if (rnd() < 0.5) {
+      const cd = d + 24
+      const cy = P.cy(cd)
+      P.circle(31, cd, 23, '#3d2208')
+      P.circle(31, cd, 21, '#d9a441')
+      P.circle(31, cd, 18, '#f4e9c8')
+      P.rect(30, cd - 16, 2, 3, '#3d2208'); P.rect(30, cd + 13, 2, 3, '#3d2208')
+      P.rect(14, cd - 1, 3, 2, '#3d2208'); P.rect(45, cd - 1, 3, 2, '#3d2208')
+      g.fillStyle = '#e8271a'
+      g.beginPath(); g.arc(24, cy - 2, 4.5, 0, Math.PI * 2); g.fill()
+      g.beginPath(); g.arc(38, cy - 2, 4.5, 0, Math.PI * 2); g.fill()
+      g.fillStyle = '#2a0a0a'
+      g.fillRect(23, cy - 3, 3, 3); g.fillRect(37, cy - 3, 3, 3)
+      g.fillStyle = '#ffffff'
+      g.fillRect(21, cy - 6, 1, 1); g.fillRect(35, cy - 6, 1, 1)
+      g.strokeStyle = '#2a0a0a'
+      g.lineWidth = 2
+      g.beginPath()
+      g.moveTo(17, cy - 11); g.lineTo(28, cy - 6)
+      g.moveTo(45, cy - 11); g.lineTo(34, cy - 6)
+      g.stroke()
+      d += 54
+    } else {
+      const r = 6 + Math.floor(rnd() * 5)
+      drawGear(P, 20 + Math.floor(rnd() * 22), d + r, r, gearColors[Math.floor(rnd() * gearColors.length)])
+      d += 2 * r + 6
+    }
+  }
+
+  // Cornisa de latón con luz roja
+  P.rect(0, 0, PIPE_W + 10, CROWN_H, '#8a5a1a')
+  P.rect(0, 0, PIPE_W + 10, 3, '#f0c060')
+  P.rect(0, 3, PIPE_W + 10, 1, '#b8801f')
+  P.rect(0, 22, PIPE_W + 10, 4, '#3d2208')
+  for (let x = 5; x < PIPE_W + 10; x += 8) P.rect(x, 8, 2, 2, '#f6d27a')
+  P.circle(31, 16, 4, '#ff3b2e')
+  P.circle(31, 16, 2, '#ffb0a0')
+  return c
+}
+
+const themeCache = {}
+function getThemeTextures(theme, variant) {
+  const key = `${theme}-${variant}`
+  if (!themeCache[key]) {
+    const build = theme === 1 ? buildPaperTexture : buildClockTexture
+    const seed = theme * 1000 + variant * 77
+    themeCache[key] = { up: build(seed, false), down: build(seed, true) }
+  }
+  return themeCache[key]
+}
+
+const BALL_COLORS = [
+  { hi: '#ff6a5a', mid: '#d9221f', lo: '#8e1010', rim: '#7a0f14', glow: 'rgba(255,60,60,0.7)' },
+  { hi: '#6aa8ff', mid: '#1f5fd9', lo: '#0f2f80', rim: '#0b1f5a', glow: 'rgba(60,120,255,0.7)' },
+  { hi: '#6aff8a', mid: '#1fa83a', lo: '#0f6020', rim: '#0b4016', glow: 'rgba(60,255,120,0.7)' },
+  { hi: '#ffe27a', mid: '#e0a20f', lo: '#8a5a05', rim: '#5a3a03', glow: 'rgba(255,200,60,0.7)' },
+  { hi: '#c88aff', mid: '#8a2fd0', lo: '#4a1480', rim: '#300c58', glow: 'rgba(170,80,255,0.7)' },
+  { hi: '#ffaa5a', mid: '#f07818', lo: '#9a4108', rim: '#6a2a05', glow: 'rgba(255,140,40,0.7)' },
+]
 
 function buildSkylineLayer(seed, bodyColor, edgeColor, maxH, minH, windowChance) {
   const rnd = mulberry32(seed)
@@ -273,26 +429,32 @@ function drawCloudCanvas(ctx, x, y, s) {
 }
 
 function drawBuilding(ctx, imgs, p, gap) {
-  const tex = getAssets().buildings[p.n % 3]
+  const theme = p.theme || 0
   const texW = PIPE_W + 10
   const x = Math.round(p.x)
+  const botY = p.topH + gap - CROWN_H
+  const topBottom = p.topH + CROWN_H
   ctx.imageSmoothingEnabled = false
 
-  // Bottom building (crown faces up)
-  const botY = p.topH + gap - CROWN_H
-  ctx.drawImage(tex, 0, 0, texW, H - botY, x, botY, texW, H - botY)
-
-  // Top building (flipped so the crown faces down)
-  const topBottom = p.topH + CROWN_H
-  ctx.save()
-  ctx.translate(x, topBottom)
-  ctx.scale(1, -1)
-  ctx.drawImage(tex, 0, 0, texW, topBottom, 0, 0, texW, topBottom)
-  ctx.restore()
-
+  if (theme === 0) {
+    const tex = getAssets().buildings[p.n % 3]
+    // Edificio de abajo (cornisa arriba)
+    ctx.drawImage(tex, 0, 0, texW, H - botY, x, botY, texW, H - botY)
+    // Edificio de arriba (volteado para que la cornisa quede abajo)
+    ctx.save()
+    ctx.translate(x, topBottom)
+    ctx.scale(1, -1)
+    ctx.drawImage(tex, 0, 0, texW, topBottom, 0, 0, texW, topBottom)
+    ctx.restore()
+  } else {
+    const t = getThemeTextures(theme, p.n % 3)
+    ctx.drawImage(t.up, 0, 0, texW, H - botY, x, botY, texW, H - botY)
+    ctx.drawImage(t.down, 0, H - topBottom, texW, topBottom, x, 0, texW, topBottom)
+  }
   ctx.imageSmoothingEnabled = true
+
   const logo = imgs['logo']
-  if (logo) {
+  if (theme === 0 && logo) {
     const lw = 46
     const lh = Math.round(lw * logo.height / logo.width)
     const lx = x + 5 + (PIPE_W - lw) / 2
@@ -301,21 +463,21 @@ function drawBuilding(ctx, imgs, p, gap) {
   }
 }
 
-function drawBall(ctx, x, y, n) {
+function drawBall(ctx, x, y, n, color) {
   const r = BALL_R
   ctx.save()
-  ctx.shadowColor = 'rgba(255, 60, 60, 0.7)'
+  ctx.shadowColor = color.glow
   ctx.shadowBlur = 8
-  ctx.fillStyle = '#7a0f14'
+  ctx.fillStyle = color.rim
   ctx.beginPath()
   ctx.arc(x, y, r + 1, 0, Math.PI * 2)
   ctx.fill()
   ctx.restore()
 
   const body = ctx.createRadialGradient(x - 4, y - 4, 2, x, y, r)
-  body.addColorStop(0, '#ff6a5a')
-  body.addColorStop(0.6, '#d9221f')
-  body.addColorStop(1, '#8e1010')
+  body.addColorStop(0, color.hi)
+  body.addColorStop(0.6, color.mid)
+  body.addColorStop(1, color.lo)
   ctx.fillStyle = body
   ctx.beginPath()
   ctx.arc(x, y, r, 0, Math.PI * 2)
@@ -353,54 +515,6 @@ function drawBirdImg(ctx, imgs, x, y, vel) {
   ctx.translate(x, y)
   ctx.rotate(angle)
   ctx.drawImage(img, -w * GIRL_ANCHOR_X, -h * GIRL_ANCHOR_Y, w, h)
-  ctx.restore()
-}
-
-function drawQuetzalImg(ctx, imgs, x, y, vel, time) {
-  const angle = Math.min(Math.max(vel * 0.05, -0.4), 1.0)
-  const img = imgs['quetz']
-  
-  ctx.save()
-  ctx.translate(x, y)
-  ctx.rotate(angle)
-
-  if (!img) {
-    ctx.fillStyle = '#2ecc71'
-    ctx.fillRect(-15, -15, 30, 30)
-    ctx.restore()
-    return
-  }
-
-  // Quetzal/serpiente: 25% más grande y animación invertida (cabeza a la izq)
-  const h = BIRD_R * 4.375 // 3.5 * 1.25 = 4.375
-  const aspect = img.width / img.height
-  const w = h * aspect
-  const t = time / 130 
-
-  const strips = 30
-  const stripW = w / strips
-  const srcStripW = img.width / strips
-
-  for (let i = 0; i < strips; i++) {
-    // Cabeza a la derecha (i -> strips), cola a la izquierda (i -> 0).
-    // La amplitud es mínima en la cabeza (derecha) y máxima en la cola (izquierda).
-    const relativePos = i / strips 
-    const waveAmp = 2 + (1 - relativePos) * 12
-    
-    // La onda viaja de derecha (cabeza) a izquierda (cola) empujada por "t + i".
-    const waveY = Math.sin(t + i * 0.35) * waveAmp
-    const globalBob = Math.sin(t * 0.8) * 4
-    
-    const dx = -w/2 + i * stripW
-    const dy = -h/2 + waveY + globalBob
-
-    ctx.drawImage(
-      img, 
-      i * srcStripW, 0, srcStripW, img.height,
-      dx, dy, stripW + 0.8, h
-    )
-  }
-
   ctx.restore()
 }
 
@@ -521,33 +635,15 @@ function drawPanel(ctx, x, y, w, h, radius = 6) {
   ctx.restore()
 }
 
-function drawCharacterSelect(ctx, time, imgs) {
-  ctx.fillStyle = 'rgba(10, 4, 32, 0.7)'
-  ctx.fillRect(0, 0, W, H)
-
-  neonText(ctx, 'ELIGE TU', W / 2, 120, 20, '#ffffff', '#ff3cac')
-  neonText(ctx, 'PERSONAJE', W / 2, 160, 20, '#7ef0ff', '#00b7ff')
-
-  // Izquierda: X center = 85
-  drawPanel(ctx, 30, 220, 110, 130, 8)
-  neonText(ctx, 'FLAPPY', 85, 335, 10, '#ffd23f', '#ff8c1a')
-  drawBirdImg(ctx, imgs, 100, 275, 0)
-
-  // Derecha: X center = 235
-  drawPanel(ctx, 180, 220, 110, 130, 8)
-  neonText(ctx, 'QUETZAL', 235, 335, 9, '#ffd23f', '#ff8c1a')
-  drawQuetzalImg(ctx, imgs, 235, 275, 0, time)
-}
-
 function drawStartScreen(ctx, flashAlpha) {
   const logoY = 110
   neonText(ctx, 'FLAPPY', W / 2, logoY, 36, '#ffe44e', '#ff8c1a')
   neonText(ctx, 'BIRD', W / 2, logoY + 50, 36, '#ffffff', '#ff3cac')
-  neonText(ctx, 'GET READY!', W / 2, 280, 16, '#7ef0ff', '#00b7ff')
+  neonText(ctx, 'GET READY!', W / 2, 335, 16, '#7ef0ff', '#00b7ff')
 
   if (flashAlpha > 0.3) {
-    drawPanel(ctx, W / 2 - 110, 310, 220, 56, 8)
-    neonText(ctx, 'TAP TO START', W / 2, 344, 12, '#ffffff', '#c04dff')
+    drawPanel(ctx, W / 2 - 110, 360, 220, 56, 8)
+    neonText(ctx, 'TAP TO START', W / 2, 394, 12, '#ffffff', '#c04dff')
   }
 }
 
@@ -609,8 +705,8 @@ export default function FlappyBird() {
   const pipeTimerRef = useRef(0)
 
   const initState = useCallback(() => ({
-    phase: 'select',
-    character: 'bird',
+    phase: 'start',
+    character: 'bird',  // Brightstar, el único personaje
     birdY: H / 2 - 40,
     birdVel: 0,
     pipes: [],
@@ -631,7 +727,7 @@ export default function FlappyBird() {
     flashTimer: 0,
     deadTimer: 0,
     scored: new Set(),
-    pipeCount: 0,
+    pipeCount: DEBUG_SKIP,
     bgX: 0,
   }), [])
 
@@ -670,19 +766,9 @@ export default function FlappyBird() {
     return { hit: false }
   }, [])
 
-  const jump = useCallback((clientX) => {
+  const jump = useCallback(() => {
     const s = stateRef.current
     if (!s) return
-    if (s.phase === 'select') {
-      if (clientX !== undefined) {
-        if (clientX < window.innerWidth / 2) s.character = 'bird'
-        else s.character = 'quetz'
-      } else {
-        s.character = 'bird'
-      }
-      s.phase = 'start'
-      return
-    }
     if (s.phase === 'start') {
       s.phase = 'playing'
       s.birdVel = JUMP_VEL
@@ -701,16 +787,15 @@ export default function FlappyBird() {
 
   // Load images on mount
   useEffect(() => {
-    const keys = ['bird', 'logo', 'quetz']
+    const keys = ['bird', 'logo']
     const paths = {
       bird:      '/assets/retro/girl.png',
       logo:      '/assets/retro/logo_banner.png',
-      quetz:     '/assets/Quetzal sin fondo.jpg',
     }
     keys.forEach(async (k) => {
       // Reintenta: por un túnel o red lenta alguna petición puede fallar
       for (let attempt = 0; attempt < 6; attempt++) {
-        const img = await loadImage(paths[k], k === 'quetz')
+        const img = await loadImage(paths[k])
         if (img) { imgsRef.current[k] = img; return }
         await new Promise(r => setTimeout(r, 500 * (attempt + 1)))
       }
@@ -730,10 +815,9 @@ export default function FlappyBird() {
     }
     const onTouch = (e) => { 
       e.preventDefault(); 
-      const t = e.touches[0];
-      jump(t ? t.clientX : undefined) 
+        jump() 
     }
-    const onClick = (e) => jump(e.clientX)
+    const onClick = () => jump()
 
     window.addEventListener('keydown', onKey)
     canvas.addEventListener('touchstart', onTouch, { passive: false })
@@ -757,6 +841,8 @@ export default function FlappyBird() {
         if (pipeTimerRef.current >= PIPE_INTERVAL) {
           const np = spawnPipe()
           np.n = ++s.pipeCount
+          np.theme = Math.floor((np.n - 1) / THEME_EVERY) % THEME_COUNT
+          np.ballColor = Math.floor(Math.random() * BALL_COLORS.length)
           s.pipes.push(np)
           pipeTimerRef.current = 0
         }
@@ -916,11 +1002,7 @@ export default function FlappyBird() {
         if (s.rainbowBirdTimer && s.rainbowBirdTimer > 0) {
           ctx.filter = `hue-rotate(${(Date.now() / 4) % 360}deg) saturate(200%)`
         }
-        if (s.character === 'quetz') {
-          drawQuetzalImg(ctx, imgs, BIRD_X, s.birdY, Math.min(Math.max(s.birdVel, -5), 5), Date.now())
-        } else {
-          drawBirdImg(ctx, imgs, BIRD_X, s.birdY, Math.min(Math.max(s.birdVel, -5), 5))
-        }
+        drawBirdImg(ctx, imgs, BIRD_X, s.birdY, Math.min(Math.max(s.birdVel, -5), 5))
         ctx.restore()
       }
 
@@ -928,7 +1010,7 @@ export default function FlappyBird() {
 
       s.pipes.forEach(p => {
         drawBuilding(ctx, imgs, p, PIPE_GAP)
-        if (!p.collected) drawBall(ctx, p.x + 5 + PIPE_W / 2, p.topH + PIPE_GAP / 2, p.n)
+        if (!p.collected) drawBall(ctx, p.x + 5 + PIPE_W / 2, p.topH + PIPE_GAP / 2, p.n, BALL_COLORS[p.ballColor])
       })
 
       ctx.save()
@@ -936,32 +1018,23 @@ export default function FlappyBird() {
         ctx.filter = `hue-rotate(${(Date.now() / 4) % 360}deg) saturate(200%)`
       }
 
-      const renderChar = (ctx, char, x, y, vel, wFrame, globalTime) => {
-        if (char === 'quetz') {
-          drawQuetzalImg(ctx, imgs, x, y, vel, globalTime || Date.now())
-        } else {
-          drawBirdImg(ctx, imgs, x, y, vel)
-        }
-      }
+      const renderChar = (ctx, x, y, vel) => drawBirdImg(ctx, imgs, x, y, vel)
 
-      if (s.phase === 'select') {
-        ctx.restore() // quitamos el filtro arcoíris si lo hubiera para esta pantalla (no deberia)
-        drawCharacterSelect(ctx, Date.now(), imgs)
-      } else if (s.phase === 'start') {
+      if (s.phase === 'start') {
         const floatY = s.birdY + Math.sin(Date.now() / 300) * 6
-        renderChar(ctx, s.character, BIRD_X, floatY, 0, s.wingFrame, Date.now())
+        renderChar(ctx, BIRD_X, floatY, 0)
         ctx.restore()
         drawStartScreen(ctx, s.flashAlpha)
       } else {
         if (!s.isHidden && s.phase !== 'pipe_enter') {
-          renderChar(ctx, s.character, BIRD_X, s.birdY, Math.min(Math.max(s.birdVel, -5), 5), s.wingFrame, Date.now())
+          renderChar(ctx, BIRD_X, s.birdY, Math.min(Math.max(s.birdVel, -5), 5))
         }
         ctx.restore()
 
         drawScore(ctx, s.score)
       }
 
-      if (DEBUG && s.phase !== 'select') {
+      if (DEBUG) {
         ctx.strokeStyle = '#00ff66'
         ctx.lineWidth = 1
         hitCircles(s.character, BIRD_X, s.birdY, s.birdVel).forEach(c => {
