@@ -16,6 +16,11 @@ const PIPE_INTERVAL = 1500
 const BIRD_X = 72
 const BIRD_R = 17
 
+const SCALE = 3          // resolución interna (nitidez), la lógica sigue en W x H
+const FONT = '"Press Start 2P", "Courier New", monospace'
+const CROWN_H = 26       // alto de la cornisa del edificio (igual que la colisión)
+const BALL_R = 14
+
 // ─── IMAGE LOADER ─────────────────────────────────────────────────────────────
 
 function loadImage(src, removeBg = false) {
@@ -59,59 +64,253 @@ function loadImage(src, removeBg = false) {
   })
 }
 
-// ─── CANVAS FALLBACK DRAWERS (used when images not uploaded yet) ──────────────
+// ─── RETRO 80s ASSETS (pre-rendered once, procedural pixel art) ───────────────
+
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+function makeCanvas(w, h) {
+  const c = document.createElement('canvas')
+  c.width = w
+  c.height = h
+  return c
+}
+
+const WINDOW_COLORS = ['#ffd23f', '#ffb000', '#ff8c1a', '#ffd23f', '#7ef0ff']
+
+function buildBuildingTexture(seed) {
+  const rnd = mulberry32(seed)
+  const c = makeCanvas(PIPE_W + 10, H)
+  const g = c.getContext('2d')
+  const bx = 5
+
+  // Body
+  g.fillStyle = '#16246a'
+  g.fillRect(bx, CROWN_H, PIPE_W, H - CROWN_H)
+  g.fillStyle = '#2f5fb0'
+  g.fillRect(bx, CROWN_H, 3, H - CROWN_H)
+  g.fillStyle = '#4a93d6'
+  g.fillRect(bx, CROWN_H, 1, H - CROWN_H)
+  g.fillStyle = '#0c1245'
+  g.fillRect(bx + PIPE_W - 4, CROWN_H, 4, H - CROWN_H)
+
+  // Body windows (4 columns)
+  for (let y = CROWN_H + 6; y + 7 < H; y += 12) {
+    for (let col = 0; col < 4; col++) {
+      const wx = bx + 7 + col * 10
+      const lit = rnd() < 0.6
+      g.fillStyle = lit ? WINDOW_COLORS[Math.floor(rnd() * WINDOW_COLORS.length)] : '#101a55'
+      g.fillRect(wx, y, 6, 7)
+    }
+  }
+
+  // Crown (wider ledge, faces the gap)
+  g.fillStyle = '#22389a'
+  g.fillRect(0, 0, PIPE_W + 10, CROWN_H)
+  g.fillStyle = '#3a56c4'
+  g.fillRect(0, 0, 2, CROWN_H)
+  g.fillStyle = '#f2a58e'
+  g.fillRect(0, 0, PIPE_W + 10, 3)
+  g.fillStyle = '#b5527f'
+  g.fillRect(0, 3, PIPE_W + 10, 2)
+  g.fillStyle = '#0d1440'
+  g.fillRect(0, CROWN_H - 4, PIPE_W + 10, 4)
+  for (let col = 0; col < 5; col++) {
+    g.fillStyle = rnd() < 0.7 ? WINDOW_COLORS[Math.floor(rnd() * WINDOW_COLORS.length)] : '#101a55'
+    g.fillRect(6 + col * 10, 10, 6, 8)
+  }
+  return c
+}
+
+function buildSkylineLayer(seed, bodyColor, edgeColor, maxH, minH, windowChance) {
+  const rnd = mulberry32(seed)
+  const c = makeCanvas(W, maxH + 20)
+  const g = c.getContext('2d')
+  const base = c.height
+  let x = 0
+  while (x < W) {
+    let bw = 16 + Math.floor(rnd() * 20)
+    if (W - (x + bw) < 14) bw = W - x
+    const bh = minH + Math.floor(rnd() * (maxH - minH))
+    g.fillStyle = bodyColor
+    g.fillRect(x, base - bh, bw, bh)
+    g.fillStyle = edgeColor
+    g.fillRect(x, base - bh, bw, 1)
+    if (rnd() < 0.35 && bw > 8) {
+      g.fillStyle = bodyColor
+      g.fillRect(x + Math.floor(bw / 2), base - bh - 10, 2, 10)
+    }
+    for (let wy = base - bh + 5; wy < base - 4; wy += 7) {
+      for (let wx = x + 3; wx + 3 < x + bw; wx += 6) {
+        if (rnd() < windowChance) {
+          g.fillStyle = rnd() < 0.7 ? '#ffb347' : '#ff5fa8'
+          g.fillRect(wx, wy, 3, 3)
+        }
+      }
+    }
+    x += bw
+  }
+  return c
+}
+
+function buildSky() {
+  const rnd = mulberry32(80)
+  const c = makeCanvas(W, GROUND_Y)
+  const g = c.getContext('2d')
+
+  const grad = g.createLinearGradient(0, 0, 0, GROUND_Y)
+  grad.addColorStop(0, '#0b0b3b')
+  grad.addColorStop(0.32, '#2a1a6e')
+  grad.addColorStop(0.55, '#6a2c91')
+  grad.addColorStop(0.75, '#c2418f')
+  grad.addColorStop(0.92, '#ff7a6e')
+  grad.addColorStop(1, '#ffb347')
+  g.fillStyle = grad
+  g.fillRect(0, 0, W, GROUND_Y)
+
+  // Stars
+  for (let i = 0; i < 45; i++) {
+    g.fillStyle = rnd() < 0.5 ? '#ffffff' : '#c9b8ff'
+    g.fillRect(Math.floor(rnd() * W), Math.floor(rnd() * GROUND_Y * 0.5), 1, 1)
+  }
+
+  // Striped retro sun
+  const sunX = 62, sunY = 345, sunR = 44
+  const sun = makeCanvas(sunR * 2, sunR * 2)
+  const sg = sun.getContext('2d')
+  const sunGrad = sg.createLinearGradient(0, 0, 0, sunR * 2)
+  sunGrad.addColorStop(0, '#ffe066')
+  sunGrad.addColorStop(1, '#ff7a4d')
+  sg.fillStyle = sunGrad
+  sg.beginPath()
+  sg.arc(sunR, sunR, sunR, 0, Math.PI * 2)
+  sg.fill()
+  sg.globalCompositeOperation = 'destination-out'
+  for (let i = 0; i < 6; i++) {
+    sg.fillRect(0, sunR + 6 + i * 8, sunR * 2, 1 + i * 0.7)
+  }
+  g.drawImage(sun, sunX - sunR, sunY - sunR)
+
+  // Mountains
+  const mountain = (color, base, amp, seed) => {
+    const r = mulberry32(seed)
+    g.fillStyle = color
+    g.beginPath()
+    g.moveTo(0, GROUND_Y)
+    let y = base
+    for (let x = 0; x <= W; x += 16) {
+      y = base - r() * amp
+      g.lineTo(x, y)
+    }
+    g.lineTo(W, GROUND_Y)
+    g.closePath()
+    g.fill()
+  }
+  mountain('#5a2f92', 400, 26, 5)
+  mountain('#40237a', 416, 22, 9)
+  return c
+}
+
+let assetCache = null
+function getAssets() {
+  if (assetCache) return assetCache
+  assetCache = {
+    sky: buildSky(),
+    far: buildSkylineLayer(11, '#2c2275', '#4b3aa0', 120, 50, 0.25),
+    near: buildSkylineLayer(23, '#1a1456', '#2e2290', 84, 30, 0.35),
+    buildings: [buildBuildingTexture(101), buildBuildingTexture(202), buildBuildingTexture(303)],
+  }
+  return assetCache
+}
+
+// ─── RETRO DRAWERS ────────────────────────────────────────────────────────────
 
 function drawCloudCanvas(ctx, x, y, s) {
-  ctx.fillStyle = '#fff'
+  const u = 4 * s
+  ctx.fillStyle = '#ff7bb0'
+  ctx.fillRect(x, y, 10 * u, u)
+  ctx.fillRect(x + 2 * u, y - u, 6 * u, u)
+  ctx.fillRect(x + 4 * u, y - 2 * u, 3 * u, u)
+  ctx.fillStyle = '#c04a9a'
+  ctx.fillRect(x + u, y + u, 9 * u, u)
+  ctx.fillStyle = '#ffb3d1'
+  ctx.fillRect(x + 3 * u, y - u, 2 * u, u)
+}
+
+function drawBuilding(ctx, imgs, p, gap) {
+  const tex = getAssets().buildings[p.n % 3]
+  const texW = PIPE_W + 10
+  const x = Math.round(p.x)
+  ctx.imageSmoothingEnabled = false
+
+  // Bottom building (crown faces up)
+  const botY = p.topH + gap - CROWN_H
+  ctx.drawImage(tex, 0, 0, texW, H - botY, x, botY, texW, H - botY)
+
+  // Top building (flipped so the crown faces down)
+  const topBottom = p.topH + CROWN_H
+  ctx.save()
+  ctx.translate(x, topBottom)
+  ctx.scale(1, -1)
+  ctx.drawImage(tex, 0, 0, texW, topBottom, 0, 0, texW, topBottom)
+  ctx.restore()
+
+  ctx.imageSmoothingEnabled = true
+  const logo = imgs['logo']
+  if (logo) {
+    const lw = 46
+    const lh = Math.round(lw * logo.height / logo.width)
+    const lx = x + 5 + (PIPE_W - lw) / 2
+    ctx.drawImage(logo, lx, p.topH - 4 - lh, lw, lh)
+    ctx.drawImage(logo, lx, botY + CROWN_H + 4, lw, lh)
+  }
+}
+
+function drawBall(ctx, x, y, n) {
+  const r = BALL_R
+  ctx.save()
+  ctx.shadowColor = 'rgba(255, 60, 60, 0.7)'
+  ctx.shadowBlur = 8
+  ctx.fillStyle = '#7a0f14'
   ctx.beginPath()
-  ctx.arc(x, y, 20 * s, 0, Math.PI * 2)
-  ctx.arc(x + 22 * s, y - 4 * s, 14 * s, 0, Math.PI * 2)
-  ctx.arc(x + 38 * s, y, 16 * s, 0, Math.PI * 2)
-  ctx.arc(x + 18 * s, y + 6 * s, 12 * s, 0, Math.PI * 2)
+  ctx.arc(x, y, r + 1, 0, Math.PI * 2)
   ctx.fill()
+  ctx.restore()
+
+  const body = ctx.createRadialGradient(x - 4, y - 4, 2, x, y, r)
+  body.addColorStop(0, '#ff6a5a')
+  body.addColorStop(0.6, '#d9221f')
+  body.addColorStop(1, '#8e1010')
+  ctx.fillStyle = body
+  ctx.beginPath()
+  ctx.arc(x, y, r, 0, Math.PI * 2)
+  ctx.fill()
+
+  const inner = ctx.createRadialGradient(x - 2, y - 2, 1, x, y, r * 0.62)
+  inner.addColorStop(0, '#ffffff')
+  inner.addColorStop(1, '#e6dcc8')
+  ctx.fillStyle = inner
+  ctx.beginPath()
+  ctx.arc(x, y, r * 0.62, 0, Math.PI * 2)
+  ctx.fill()
+
+  const label = String(n)
+  const size = label.length <= 2 ? 10 : label.length === 3 ? 8 : 6
+  ctx.font = `${size}px ${FONT}`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillStyle = '#14052e'
+  ctx.fillText(label, x + 1, y + 1)
+  ctx.textBaseline = 'alphabetic'
 }
 
-function drawPipeCanvas(ctx, x, topH, gap) {
-  const capW = PIPE_W + 10
-  const capH = 26
-  const bX = x + 5
-
-  const bodyGrad = ctx.createLinearGradient(bX, 0, bX + PIPE_W, 0)
-  bodyGrad.addColorStop(0, '#548920')
-  bodyGrad.addColorStop(0.15, '#73bf2e')
-  bodyGrad.addColorStop(0.45, '#a8e063')
-  bodyGrad.addColorStop(0.75, '#73bf2e')
-  bodyGrad.addColorStop(1, '#548920')
-
-  const capGrad = ctx.createLinearGradient(x, 0, x + capW, 0)
-  capGrad.addColorStop(0, '#3a6b10')
-  capGrad.addColorStop(0.12, '#5fa01e')
-  capGrad.addColorStop(0.4, '#8dd63a')
-  capGrad.addColorStop(0.7, '#5fa01e')
-  capGrad.addColorStop(1, '#3a6b10')
-
-  // Bottom pipe
-  const botY = topH + gap
-  ctx.fillStyle = bodyGrad
-  ctx.fillRect(bX, botY, PIPE_W, H - botY)
-  ctx.strokeStyle = '#375c0e'
-  ctx.lineWidth = 2
-  ctx.strokeRect(bX, botY, PIPE_W, H - botY)
-  ctx.fillStyle = capGrad
-  ctx.fillRect(x, botY - capH, capW, capH)
-  ctx.strokeStyle = '#2b5009'
-  ctx.strokeRect(x, botY - capH, capW, capH)
-
-  // Top pipe
-  ctx.fillStyle = bodyGrad
-  ctx.fillRect(bX, 0, PIPE_W, topH)
-  ctx.strokeStyle = '#375c0e'
-  ctx.strokeRect(bX, 0, PIPE_W, topH)
-  ctx.fillStyle = capGrad
-  ctx.fillRect(x, topH, capW, capH)
-  ctx.strokeStyle = '#2b5009'
-  ctx.strokeRect(x, topH, capW, capH)
-}
+// ─── CANVAS FALLBACK BIRD (used when the sprite is missing) ───────────────────
 
 function drawBirdCanvas(ctx, x, y, vel, wingFrame) {
   const r = BIRD_R
@@ -180,18 +379,17 @@ function drawBirdCanvas(ctx, x, y, vel, wingFrame) {
 
 // ─── IMAGE-BASED DRAWERS ──────────────────────────────────────────────────────
 
-function drawBirdImg(ctx, imgs, x, y, vel, wingFrame) {
+function drawBirdImg(ctx, imgs, x, y, vel) {
   const angle = Math.min(Math.max(vel * 0.06, -0.5), 1.2)
-  const frameKeys = ['bird_mid', 'bird_up', 'bird_down']
-  const key = imgs[frameKeys[wingFrame]] ? frameKeys[wingFrame] : 'bird'
-  const img = imgs[key]
+  const img = imgs['bird']
   if (!img) return
 
-  const size = BIRD_R * 3.125
+  const w = 64
+  const h = Math.round(w * img.height / img.width)
   ctx.save()
   ctx.translate(x, y)
   ctx.rotate(angle)
-  ctx.drawImage(img, -size / 2, -size / 2, size, size)
+  ctx.drawImage(img, -w / 2, -h / 2, w, h)
   ctx.restore()
 }
 
@@ -243,290 +441,193 @@ function drawQuetzalImg(ctx, imgs, x, y, vel, time) {
   ctx.restore()
 }
 
-function drawCharacterSelect(ctx, time, imgs) {
-  ctx.fillStyle = 'rgba(0,0,0,0.6)'
-  ctx.fillRect(0, 0, W, H)
-
-  ctx.save()
-  ctx.font = 'bold 36px "Segoe UI", Arial, sans-serif'
-  ctx.textAlign = 'center'
-  ctx.fillStyle = '#fff'
-  ctx.strokeStyle = '#000'
-  ctx.lineWidth = 5
-  ctx.strokeText('ELIGE TU', W/2, 120)
-  ctx.fillText('ELIGE TU', W/2, 120)
-  ctx.strokeText('PERSONAJE', W/2, 160)
-  ctx.fillText('PERSONAJE', W/2, 160)
-  ctx.restore()
-
-  // Izquierda: X center = 85
-  drawPanel(ctx, 30, 220, 110, 130, 10)
-  ctx.save()
-  ctx.font = 'bold 18px "Segoe UI", Arial'
-  ctx.textAlign = 'center'
-  ctx.fillStyle = '#5a3a00'
-  ctx.fillText('FLAPPY', 85, 335)
-  ctx.restore()
-  if (imgs['bird'] || imgs['bird_mid']) {
-    drawBirdImg(ctx, imgs, 85, 275, 0, Math.floor((time/150)%3))
-  } else {
-    drawBirdCanvas(ctx, 85, 275, 0, Math.floor((time/150)%3))
-  }
-
-  // Derecha: X center = 235
-  drawPanel(ctx, 180, 220, 110, 130, 10)
-  ctx.save()
-  ctx.font = 'bold 16px "Segoe UI", Arial'
-  ctx.textAlign = 'center'
-  ctx.fillStyle = '#5a3a00'
-  ctx.fillText('QUETZAL', 235, 335)
-  ctx.restore()
-  drawQuetzalImg(ctx, imgs, 235, 275, 0, time)
-}
-
-function drawPipeImg(ctx, imgs, x, topH, gap) {
-  const img = imgs['pipe']
-  if (!img) return
-
-  const pipeW = PIPE_W + 10  // match cap width
-  const capH = Math.round(img.height * (pipeW / img.width)) // keep aspect for cap portion
-  const actualCapH = 26
-
-  // Bottom pipe body
-  const botCapY = topH + gap - actualCapH
-  const botBodyY = topH + gap
-  const botBodyH = H - botBodyY
-
-  // Draw bottom cap (top portion of image)
-  ctx.drawImage(img, x, botCapY, pipeW, actualCapH + botBodyH)
-
-  // Top pipe (flip vertically)
-  ctx.save()
-  ctx.translate(x + pipeW / 2, topH / 2)
-  ctx.scale(1, -1)
-  ctx.drawImage(img, -pipeW / 2, -topH / 2, pipeW, topH + actualCapH)
-  ctx.restore()
-}
-
-function drawCloudImg(ctx, img, x, y, s) {
-  const w = 80 * s
-  const h = 40 * s
-  ctx.drawImage(img, x - w * 0.2, y - h * 0.5, w, h)
-}
-
 // ─── SHARED DRAW FUNCTIONS ────────────────────────────────────────────────────
 
-function drawBackground(ctx, clouds, imgs, isNight) {
-  const grad = ctx.createLinearGradient(0, 0, 0, GROUND_Y)
-  if (isNight) {
-    grad.addColorStop(0, '#000822')
-    grad.addColorStop(1, '#001a4d')
-  } else {
-    grad.addColorStop(0, '#4ec0ca')
-    grad.addColorStop(1, '#9ee6f0')
-  }
-  ctx.fillStyle = grad
-  ctx.fillRect(0, 0, W, GROUND_Y)
+function neonText(ctx, text, x, y, size, color, glow, align = 'center') {
+  ctx.save()
+  ctx.font = `${size}px ${FONT}`
+  ctx.textAlign = align
+  ctx.lineJoin = 'round'
+  ctx.strokeStyle = '#14052e'
+  ctx.lineWidth = Math.max(3, size / 3)
+  ctx.strokeText(text, x, y)
+  ctx.shadowColor = glow
+  ctx.shadowBlur = 8
+  ctx.fillStyle = color
+  ctx.fillText(text, x, y)
+  ctx.restore()
+}
 
-  if (isNight) {
-    ctx.fillStyle = '#fff'
-    for (let i = 0; i < 20; i++) {
-      const sx = (Math.sin(i * 123) * 0.5 + 0.5) * W
-      const sy = (Math.cos(i * 321) * 0.5 + 0.5) * GROUND_Y
-      ctx.fillRect(sx, sy, 2, 2)
-    }
-  }
+function drawBackground(ctx, clouds, imgs, isNight, bgX) {
+  const { sky, far, near } = getAssets()
+  ctx.imageSmoothingEnabled = false
+  ctx.drawImage(sky, 0, 0)
 
   ctx.save()
-  if (isNight) ctx.globalAlpha = 0.4
-  clouds.forEach(c => {
-    if (imgs['cloud']) {
-      drawCloudImg(ctx, imgs['cloud'], c.x, c.y, c.s)
-    } else {
-      drawCloudCanvas(ctx, c.x, c.y, c.s)
-    }
-  })
+  if (isNight) ctx.globalAlpha = 0.5
+  clouds.forEach(c => drawCloudCanvas(ctx, c.x, c.y, c.s))
   ctx.restore()
+
+  const layer = (img, factor) => {
+    const off = -((bgX * factor) % W)
+    const y = GROUND_Y - img.height
+    ctx.drawImage(img, Math.round(off), y)
+    ctx.drawImage(img, Math.round(off) + W, y)
+  }
+  layer(far, 0.15)
+  layer(near, 0.4)
+  ctx.imageSmoothingEnabled = true
+
+  if (isNight) {
+    ctx.fillStyle = 'rgba(0, 0, 30, 0.45)'
+    ctx.fillRect(0, 0, W, GROUND_Y)
+  }
 }
 
 function drawGround(ctx, groundX) {
-  ctx.fillStyle = '#ded895'
+  const grad = ctx.createLinearGradient(0, GROUND_Y, 0, H)
+  grad.addColorStop(0, '#2b0f5e')
+  grad.addColorStop(1, '#0a0420')
+  ctx.fillStyle = grad
   ctx.fillRect(0, GROUND_Y, W, GROUND_H)
-  ctx.fillStyle = '#5ec22f'
-  ctx.fillRect(0, GROUND_Y, W, 20)
-  ctx.fillStyle = '#c8c269'
-  for (let i = 0; i < 5; i++) {
-    const sx = ((groundX + i * 64) % W) - 64
-    ctx.fillRect(sx, GROUND_Y + 28, 48, 10)
-    ctx.fillRect(sx, GROUND_Y + 48, 30, 8)
-    ctx.fillRect(sx, GROUND_Y + 64, 40, 8)
-  }
-  ctx.fillStyle = '#72d935'
-  ctx.fillRect(0, GROUND_Y, W, 8)
-  ctx.fillStyle = '#3a9e14'
-  ctx.fillRect(0, GROUND_Y + 20, W, 3)
-}
 
-function drawScore(ctx, score) {
   ctx.save()
-  ctx.font = 'bold 44px "Segoe UI", Arial, sans-serif'
-  ctx.textAlign = 'center'
-  ctx.strokeStyle = '#000'
-  ctx.lineWidth = 6
-  ctx.lineJoin = 'round'
-  ctx.strokeText(String(score), W / 2, 70)
-  ctx.fillStyle = '#fff'
-  ctx.fillText(String(score), W / 2, 70)
+  ctx.beginPath()
+  ctx.rect(0, GROUND_Y, W, GROUND_H)
+  ctx.clip()
+  ctx.strokeStyle = 'rgba(255, 60, 172, 0.55)'
+  ctx.lineWidth = 1
+  for (let i = 1; i <= 5; i++) {
+    const y = GROUND_Y + GROUND_H * (i / 5) * (i / 5)
+    ctx.beginPath()
+    ctx.moveTo(0, y)
+    ctx.lineTo(W, y)
+    ctx.stroke()
+  }
+  for (let i = -3; i <= 8; i++) {
+    const xb = i * 64 + groundX
+    const xt = W / 2 + (xb - W / 2) * 0.3
+    ctx.beginPath()
+    ctx.moveTo(xt, GROUND_Y)
+    ctx.lineTo(xb, H)
+    ctx.stroke()
+  }
+  ctx.restore()
+
+  ctx.save()
+  ctx.shadowColor = '#ff3cac'
+  ctx.shadowBlur = 8
+  ctx.fillStyle = '#ff5fc8'
+  ctx.fillRect(0, GROUND_Y, W, 2)
   ctx.restore()
 }
 
-function drawPanel(ctx, x, y, w, h, radius = 10) {
+function drawScore(ctx, score) {
+  drawPanel(ctx, 8, 8, 112, 46, 4)
+  neonText(ctx, 'SCORE', 18, 26, 8, '#ffb3f0', '#ff3cac', 'left')
+  neonText(ctx, String(score).padStart(5, '0'), 18, 46, 18, '#ffffff', '#c04dff', 'left')
+}
+
+function drawPanel(ctx, x, y, w, h, radius = 6) {
+  const path = (ix, iy, iw, ih, r) => {
+    ctx.beginPath()
+    ctx.moveTo(ix + r, iy)
+    ctx.lineTo(ix + iw - r, iy)
+    ctx.lineTo(ix + iw, iy + r)
+    ctx.lineTo(ix + iw, iy + ih - r)
+    ctx.lineTo(ix + iw - r, iy + ih)
+    ctx.lineTo(ix + r, iy + ih)
+    ctx.lineTo(ix, iy + ih - r)
+    ctx.lineTo(ix, iy + r)
+    ctx.closePath()
+  }
   ctx.save()
-  ctx.beginPath()
-  ctx.moveTo(x + radius, y)
-  ctx.lineTo(x + w - radius, y)
-  ctx.quadraticCurveTo(x + w, y, x + w, y + radius)
-  ctx.lineTo(x + w, y + h - radius)
-  ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h)
-  ctx.lineTo(x + radius, y + h)
-  ctx.quadraticCurveTo(x, y + h, x, y + h - radius)
-  ctx.lineTo(x, y + radius)
-  ctx.quadraticCurveTo(x, y, x + radius, y)
-  ctx.closePath()
-  ctx.fillStyle = '#e8d5a3'
+  path(x, y, w, h, radius)
+  ctx.fillStyle = 'rgba(16, 12, 58, 0.92)'
   ctx.fill()
-  ctx.strokeStyle = '#b89050'
-  ctx.lineWidth = 3
+  ctx.shadowColor = '#c04dff'
+  ctx.shadowBlur = 8
+  ctx.strokeStyle = '#c04dff'
+  ctx.lineWidth = 2
+  ctx.stroke()
+  ctx.shadowBlur = 0
+  path(x + 3, y + 3, w - 6, h - 6, radius)
+  ctx.strokeStyle = 'rgba(255, 122, 217, 0.6)'
+  ctx.lineWidth = 1
   ctx.stroke()
   ctx.restore()
 }
 
+function drawCharacterSelect(ctx, time, imgs) {
+  ctx.fillStyle = 'rgba(10, 4, 32, 0.7)'
+  ctx.fillRect(0, 0, W, H)
+
+  neonText(ctx, 'ELIGE TU', W / 2, 120, 20, '#ffffff', '#ff3cac')
+  neonText(ctx, 'PERSONAJE', W / 2, 160, 20, '#7ef0ff', '#00b7ff')
+
+  // Izquierda: X center = 85
+  drawPanel(ctx, 30, 220, 110, 130, 8)
+  neonText(ctx, 'FLAPPY', 85, 335, 10, '#ffd23f', '#ff8c1a')
+  if (imgs['bird']) {
+    drawBirdImg(ctx, imgs, 85, 275, 0)
+  } else {
+    drawBirdCanvas(ctx, 85, 275, 0, Math.floor((time / 150) % 3))
+  }
+
+  // Derecha: X center = 235
+  drawPanel(ctx, 180, 220, 110, 130, 8)
+  neonText(ctx, 'QUETZAL', 235, 335, 9, '#ffd23f', '#ff8c1a')
+  drawQuetzalImg(ctx, imgs, 235, 275, 0, time)
+}
+
 function drawStartScreen(ctx, flashAlpha) {
   const logoY = 110
-  ctx.save()
-  ctx.font = 'bold 56px "Segoe UI", Arial Black, sans-serif'
-  ctx.textAlign = 'center'
-  ctx.fillStyle = '#6b4c12'
-  ctx.fillText('FLAPPY', W / 2 + 3, logoY + 3)
-  ctx.strokeStyle = '#6b4c12'
-  ctx.lineWidth = 8
-  ctx.lineJoin = 'round'
-  ctx.strokeText('FLAPPY', W / 2, logoY)
-  const g1 = ctx.createLinearGradient(0, logoY - 50, 0, logoY + 10)
-  g1.addColorStop(0, '#ffe44e')
-  g1.addColorStop(0.5, '#f5c200')
-  g1.addColorStop(1, '#e09400')
-  ctx.fillStyle = g1
-  ctx.fillText('FLAPPY', W / 2, logoY)
-  ctx.restore()
-
-  ctx.save()
-  ctx.font = 'bold 56px "Segoe UI", Arial Black, sans-serif'
-  ctx.textAlign = 'center'
-  ctx.fillStyle = '#4a2800'
-  ctx.fillText('BIRD', W / 2 + 3, logoY + 61)
-  ctx.strokeStyle = '#4a2800'
-  ctx.lineWidth = 8
-  ctx.lineJoin = 'round'
-  ctx.strokeText('BIRD', W / 2, logoY + 58)
-  const g2 = ctx.createLinearGradient(0, logoY + 10, 0, logoY + 68)
-  g2.addColorStop(0, '#fff')
-  g2.addColorStop(1, '#dde')
-  ctx.fillStyle = g2
-  ctx.fillText('BIRD', W / 2, logoY + 58)
-  ctx.restore()
-
-  ctx.save()
-  ctx.font = 'bold 28px "Segoe UI", Arial, sans-serif'
-  ctx.textAlign = 'center'
-  ctx.strokeStyle = '#000'
-  ctx.lineWidth = 5
-  ctx.lineJoin = 'round'
-  ctx.strokeText('GET READY!', W / 2, 280)
-  ctx.fillStyle = '#fff'
-  ctx.fillText('GET READY!', W / 2, 280)
-  ctx.restore()
+  neonText(ctx, 'FLAPPY', W / 2, logoY, 36, '#ffe44e', '#ff8c1a')
+  neonText(ctx, 'BIRD', W / 2, logoY + 50, 36, '#ffffff', '#ff3cac')
+  neonText(ctx, 'GET READY!', W / 2, 280, 16, '#7ef0ff', '#00b7ff')
 
   if (flashAlpha > 0.3) {
-    drawPanel(ctx, W / 2 - 110, 310, 220, 56, 10)
-    ctx.save()
-    ctx.font = 'bold 22px "Segoe UI", Arial, sans-serif'
-    ctx.textAlign = 'center'
-    ctx.fillStyle = '#5a3a00'
-    ctx.fillText('👆  TAP TO START', W / 2, 347)
-    ctx.restore()
+    drawPanel(ctx, W / 2 - 110, 310, 220, 56, 8)
+    neonText(ctx, 'TAP TO START', W / 2, 344, 12, '#ffffff', '#c04dff')
   }
 }
 
 function drawGameOver(ctx, score, best) {
-  ctx.fillStyle = 'rgba(0,0,0,0.45)'
+  ctx.fillStyle = 'rgba(10, 4, 32, 0.6)'
   ctx.fillRect(0, 0, W, H)
 
   const bannerY = 150
-  drawPanel(ctx, W / 2 - 140, bannerY, 280, 60, 10)
-  ctx.save()
-  ctx.font = 'bold 40px "Segoe UI", Arial Black, sans-serif'
-  ctx.textAlign = 'center'
-  ctx.strokeStyle = '#7a0000'
-  ctx.lineWidth = 6
-  ctx.lineJoin = 'round'
-  ctx.strokeText('GAME OVER', W / 2, bannerY + 44)
-  ctx.fillStyle = '#fff'
-  ctx.fillText('GAME OVER', W / 2, bannerY + 44)
-  ctx.restore()
+  drawPanel(ctx, W / 2 - 140, bannerY, 280, 60, 8)
+  neonText(ctx, 'GAME OVER', W / 2, bannerY + 38, 20, '#ff5a6e', '#ff1744')
 
   const panelX = W / 2 - 130
   const panelY = 230
-  drawPanel(ctx, panelX, panelY, 260, 120, 12)
+  drawPanel(ctx, panelX, panelY, 260, 120, 8)
 
-  ctx.save()
-  ctx.font = 'bold 18px "Segoe UI", Arial, sans-serif'
-  ctx.textAlign = 'left'
-  ctx.fillStyle = '#8b6914'
-  ctx.fillText('SCORE', panelX + 20, panelY + 38)
-  ctx.textAlign = 'right'
-  ctx.font = 'bold 32px "Segoe UI", Arial, sans-serif'
-  ctx.strokeStyle = '#000'
-  ctx.lineWidth = 4
-  ctx.lineJoin = 'round'
-  ctx.strokeText(String(score), panelX + 240, panelY + 40)
-  ctx.fillStyle = '#fff'
-  ctx.fillText(String(score), panelX + 240, panelY + 40)
-  ctx.restore()
+  neonText(ctx, 'SCORE', panelX + 20, panelY + 38, 12, '#ffb3f0', '#ff3cac', 'left')
+  neonText(ctx, String(score), panelX + 240, panelY + 40, 20, '#ffffff', '#c04dff', 'right')
 
-  ctx.strokeStyle = '#c8a560'
-  ctx.lineWidth = 2
+  ctx.strokeStyle = 'rgba(255, 122, 217, 0.6)'
+  ctx.lineWidth = 1
   ctx.beginPath()
   ctx.moveTo(panelX + 15, panelY + 60)
   ctx.lineTo(panelX + 245, panelY + 60)
   ctx.stroke()
 
-  ctx.save()
-  ctx.font = 'bold 18px "Segoe UI", Arial, sans-serif'
-  ctx.textAlign = 'left'
-  ctx.fillStyle = '#8b6914'
-  ctx.fillText('BEST', panelX + 20, panelY + 100)
-  ctx.textAlign = 'right'
-  ctx.font = 'bold 32px "Segoe UI", Arial, sans-serif'
-  ctx.strokeStyle = '#000'
-  ctx.lineWidth = 4
-  ctx.lineJoin = 'round'
-  ctx.strokeText(String(best), panelX + 240, panelY + 100)
-  ctx.fillStyle = '#fff'
-  ctx.fillText(String(best), panelX + 240, panelY + 100)
-  ctx.restore()
+  neonText(ctx, 'BEST', panelX + 20, panelY + 100, 12, '#ffb3f0', '#ff3cac', 'left')
+  neonText(ctx, String(best), panelX + 240, panelY + 100, 20, '#ffd23f', '#ff8c1a', 'right')
 
   if (score >= 10) {
     const medal = score >= 40 ? '#ffd700' : score >= 20 ? '#c0c0c0' : '#cd7f32'
     ctx.save()
     ctx.beginPath()
-    ctx.arc(panelX + 55, panelY + 70, 28, 0, Math.PI * 2)
+    ctx.arc(panelX + 55, panelY + 72, 14, 0, Math.PI * 2)
     ctx.fillStyle = medal
     ctx.fill()
-    ctx.strokeStyle = '#8b6914'
-    ctx.lineWidth = 3
+    ctx.strokeStyle = '#ff7ad9'
+    ctx.lineWidth = 2
     ctx.stroke()
-    ctx.font = '20px Arial'
+    ctx.font = '12px Arial'
     ctx.textAlign = 'center'
     ctx.fillStyle = '#fff'
     ctx.fillText(score >= 40 ? '🏆' : score >= 20 ? '🥈' : '🥉', panelX + 55, panelY + 77)
@@ -534,13 +635,8 @@ function drawGameOver(ctx, score, best) {
   }
 
   const btnY = 378
-  drawPanel(ctx, W / 2 - 90, btnY, 180, 56, 12)
-  ctx.save()
-  ctx.font = 'bold 22px "Segoe UI", Arial, sans-serif'
-  ctx.textAlign = 'center'
-  ctx.fillStyle = '#5a3a00'
-  ctx.fillText('▶  PLAY AGAIN', W / 2, btnY + 36)
-  ctx.restore()
+  drawPanel(ctx, W / 2 - 90, btnY, 180, 56, 8)
+  neonText(ctx, 'PLAY AGAIN', W / 2, btnY + 34, 12, '#ffffff', '#c04dff')
 }
 
 // ─── COMPONENT ────────────────────────────────────────────────────────────────
@@ -577,6 +673,8 @@ export default function FlappyBird() {
     flashTimer: 0,
     deadTimer: 0,
     scored: new Set(),
+    pipeCount: 0,
+    bgX: 0,
   }), [])
 
   const spawnPipe = useCallback(() => {
@@ -652,14 +750,10 @@ export default function FlappyBird() {
 
   // Load images on mount
   useEffect(() => {
-    const keys = ['bird', 'bird_mid', 'bird_up', 'bird_down', 'pipe', 'cloud', 'quetz']
+    const keys = ['bird', 'logo', 'quetz']
     const paths = {
-      bird:      '/assets/imagen-pajaro.png',
-      bird_mid:  '/assets/bird_mid.png',
-      bird_up:   '/assets/bird_up.png',
-      bird_down: '/assets/bird_down.png',
-      pipe:      '/assets/pipe.png',
-      cloud:     '/assets/cloud.png',
+      bird:      '/assets/retro/girl.png',
+      logo:      '/assets/retro/logo_banner.png',
       quetz:     '/assets/Quetzal sin fondo.jpg',
     }
     Promise.all(
@@ -709,7 +803,9 @@ export default function FlappyBird() {
 
         pipeTimerRef.current += dt
         if (pipeTimerRef.current >= PIPE_INTERVAL) {
-          s.pipes.push(spawnPipe())
+          const np = spawnPipe()
+          np.n = ++s.pipeCount
+          s.pipes.push(np)
           pipeTimerRef.current = 0
         }
         s.pipes.forEach(p => { p.x -= speed })
@@ -779,6 +875,7 @@ export default function FlappyBird() {
 
       if (s.phase !== 'dead' && s.phase !== 'pipe_enter') {
         s.groundX = (s.groundX - speed) % 64
+        s.bgX += speed
       }
 
       if (s.phase === 'playing' || s.phase === 'pipe_enter') {
@@ -843,7 +940,8 @@ export default function FlappyBird() {
       s.flashAlpha = s.flashTimer < 300 ? 1 : 0
 
       // ── DRAW ──
-      drawBackground(ctx, s.clouds, imgs, s.fireworksTimer > 0)
+      ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0)
+      drawBackground(ctx, s.clouds, imgs, s.fireworksTimer > 0, s.bgX)
 
       if (s.particles && s.particles.length > 0) {
         s.particles.forEach(p => {
@@ -865,8 +963,8 @@ export default function FlappyBird() {
         if (s.character === 'quetz') {
           drawQuetzalImg(ctx, imgs, BIRD_X, s.birdY, Math.min(Math.max(s.birdVel, -5), 5), Date.now())
         } else {
-          if (imgs['bird'] || imgs['bird_mid']) {
-            drawBirdImg(ctx, imgs, BIRD_X, s.birdY, Math.min(Math.max(s.birdVel, -5), 5), s.wingFrame)
+          if (imgs['bird']) {
+            drawBirdImg(ctx, imgs, BIRD_X, s.birdY, Math.min(Math.max(s.birdVel, -5), 5))
           } else {
             drawBirdCanvas(ctx, BIRD_X, s.birdY, Math.min(Math.max(s.birdVel, -5), 5), s.wingFrame)
           }
@@ -875,11 +973,8 @@ export default function FlappyBird() {
       }
 
       s.pipes.forEach(p => {
-        if (imgs['pipe']) {
-          drawPipeImg(ctx, imgs, p.x, p.topH, PIPE_GAP)
-        } else {
-          drawPipeCanvas(ctx, p.x, p.topH, PIPE_GAP)
-        }
+        drawBuilding(ctx, imgs, p, PIPE_GAP)
+        drawBall(ctx, p.x + 5 + PIPE_W / 2, p.topH + PIPE_GAP / 2, p.n)
       })
 
       if (s.poops) {
@@ -904,8 +999,8 @@ export default function FlappyBird() {
         if (char === 'quetz') {
           drawQuetzalImg(ctx, imgs, x, y, vel, globalTime || Date.now())
         } else {
-          if (imgs['bird'] || imgs['bird_mid']) {
-            drawBirdImg(ctx, imgs, x, y, vel, wFrame)
+          if (imgs['bird']) {
+            drawBirdImg(ctx, imgs, x, y, vel)
           } else {
             drawBirdCanvas(ctx, x, y, vel, wFrame)
           }
@@ -961,9 +1056,9 @@ export default function FlappyBird() {
   return (
     <canvas
       ref={canvasRef}
-      width={W}
-      height={H}
-      style={{ display: 'block', imageRendering: 'pixelated', cursor: 'pointer' }}
+      width={W * SCALE}
+      height={H * SCALE}
+      style={{ display: 'block', cursor: 'pointer' }}
     />
   )
 }
