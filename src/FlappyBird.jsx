@@ -11,8 +11,9 @@ const JUMP_VEL = -9
 const PIPE_SPEED = 2.5
 const PIPE_W = 52
 const PIPE_GAP = 206
-const EASY_GAP = 256     // hueco más grande en los primeros obstáculos
-const EASY_COUNT = 10
+const GAP_EASIEST = 290  // obstáculos 1-10
+const GAP_EASY = 256     // obstáculos 11-20
+const EASY_COUNT = 10     // cada tramo dura 10 obstáculos
 const PIPE_INTERVAL = 1500
 
 const BIRD_X = 72
@@ -245,75 +246,76 @@ function buildPaperTexture(seed, flip) {
   return c
 }
 
-function drawGear(P, gx, d, r, color) {
-  const g = P.g
-  const cy = P.cy(d)
-  g.fillStyle = color
-  for (let k = 0; k < 8; k++) {
-    const a = (k / 8) * Math.PI * 2
-    g.fillRect(Math.round(gx + Math.cos(a) * (r + 1) - 1.5), Math.round(cy + Math.sin(a) * (r + 1) - 1.5), 3, 3)
-  }
-  P.circle(gx, d, r, color)
-  P.circle(gx, d, r * 0.55, 'rgba(40,20,5,0.45)')
-  P.circle(gx, d, 2, '#2a1505')
-}
-
 function buildClockTexture(seed, flip) {
   const rnd = mulberry32(seed)
   const c = makeCanvas(PIPE_W + 10, H)
   const P = makePainter(c.getContext('2d'), flip)
   const g = P.g
 
-  P.rect(5, CROWN_H, PIPE_W, H - CROWN_H, '#6e4210')
-  P.rect(5, CROWN_H, 3, H - CROWN_H, '#d9a441')
-  P.rect(5, CROWN_H, 1, H - CROWN_H, '#f6d27a')
-  P.rect(53, CROWN_H, 4, H - CROWN_H, '#3d2208')
-  for (let d = CROWN_H + 7; d < H; d += 14) {
-    for (let x = 12; x < 52; x += 8) P.rect(x, d, 2, 2, '#c88a2a')
+  // Torre de piedra estilo Big Ben
+  P.rect(5, CROWN_H, PIPE_W, H - CROWN_H, '#b8955a')
+  for (let d = CROWN_H + 4; d < H; d += 8) {
+    P.rect(5, d, PIPE_W, 1, '#a07f48')
+    const off = Math.floor(rnd() * 4) * 8 + 6
+    for (let x = off; x < 57; x += 14) P.rect(x, d - 7, 1, 7, '#a07f48')
   }
-  P.rect(11, CROWN_H, 4, H - CROWN_H, '#b5651d'); P.rect(11, CROWN_H, 1, H - CROWN_H, '#e08a3c')
-  P.rect(47, CROWN_H, 4, H - CROWN_H, '#b5651d'); P.rect(47, CROWN_H, 1, H - CROWN_H, '#e08a3c')
+  P.rect(5, CROWN_H, 3, H - CROWN_H, '#d8b676')
+  P.rect(53, CROWN_H, 4, H - CROWN_H, '#8a6a38')
+  P.rect(12, CROWN_H, 2, H - CROWN_H, '#8a6a38')   // pilastras
+  P.rect(48, CROWN_H, 2, H - CROWN_H, '#8a6a38')
 
-  // Engranajes y relojes con cara de enojo
-  const gearColors = ['#d9a441', '#c0392b', '#b5651d']
-  for (let d = CROWN_H + 8; d < H;) {
-    if (rnd() < 0.5) {
-      const cd = d + 24
-      const cy = P.cy(cd)
-      P.circle(31, cd, 23, '#3d2208')
-      P.circle(31, cd, 21, '#d9a441')
-      P.circle(31, cd, 18, '#f4e9c8')
-      P.rect(30, cd - 16, 2, 3, '#3d2208'); P.rect(30, cd + 13, 2, 3, '#3d2208')
-      P.rect(14, cd - 1, 3, 2, '#3d2208'); P.rect(45, cd - 1, 3, 2, '#3d2208')
-      g.fillStyle = '#e8271a'
-      g.beginPath(); g.arc(24, cy - 2, 4.5, 0, Math.PI * 2); g.fill()
-      g.beginPath(); g.arc(38, cy - 2, 4.5, 0, Math.PI * 2); g.fill()
-      g.fillStyle = '#2a0a0a'
-      g.fillRect(23, cy - 3, 3, 3); g.fillRect(37, cy - 3, 3, 3)
-      g.fillStyle = '#ffffff'
-      g.fillRect(21, cy - 6, 1, 1); g.fillRect(35, cy - 6, 1, 1)
-      g.strokeStyle = '#2a0a0a'
-      g.lineWidth = 2
-      g.beginPath()
-      g.moveTo(17, cy - 11); g.lineTo(28, cy - 6)
-      g.moveTo(45, cy - 11); g.lineTo(34, cy - 6)
-      g.stroke()
-      d += 54
-    } else {
-      const r = 6 + Math.floor(rnd() * 5)
-      drawGear(P, 20 + Math.floor(rnd() * 22), d + r, r, gearColors[Math.floor(rnd() * gearColors.length)])
-      d += 2 * r + 6
+  // Ventanas ojivales y cintas doradas lejos de la cara
+  for (let d = CROWN_H + 78; d < H; d += 46) {
+    for (const x of [19, 37]) {
+      P.rect(x, d, 6, 12, '#2a1a08')
+      P.circle(x + 3, d + 12, 3, '#2a1a08')
+      P.rect(x + 2, d + 2, 2, 4, '#f6d27a')
     }
+    if (rnd() < 0.7) P.rect(5, d + 24, PIPE_W, 3, '#d9a441')
   }
 
-  // Cornisa de latón con luz roja
-  P.rect(0, 0, PIPE_W + 10, CROWN_H, '#8a5a1a')
-  P.rect(0, 0, PIPE_W + 10, 3, '#f0c060')
-  P.rect(0, 3, PIPE_W + 10, 1, '#b8801f')
-  P.rect(0, 22, PIPE_W + 10, 4, '#3d2208')
-  for (let x = 5; x < PIPE_W + 10; x += 8) P.rect(x, 8, 2, 2, '#f6d27a')
-  P.circle(31, 16, 4, '#ff3b2e')
-  P.circle(31, 16, 2, '#ffb0a0')
+  // Marco cuadrado dorado con la única cara del reloj
+  const cd = CROWN_H + 33
+  const cy = P.cy(cd)
+  P.rect(5, cd - 27, PIPE_W, 54, '#5a3f1a')
+  P.rect(7, cd - 25, PIPE_W - 4, 50, '#d9a441')
+  P.rect(9, cd - 23, PIPE_W - 8, 46, '#6e4f22')
+  P.circle(31, cd, 23, '#d9a441')
+  P.circle(31, cd, 21, '#3d2208')
+  P.circle(31, cd, 20, '#f4e9c8')
+  g.fillStyle = '#3d2208'
+  for (let k = 0; k < 12; k++) {
+    const a = (k / 12) * Math.PI * 2
+    const big = k % 3 === 0
+    const r = 17
+    const sz = big ? 3 : 2
+    g.fillRect(Math.round(31 + Math.cos(a) * r - sz / 2), Math.round(cy + Math.sin(a) * r - sz / 2), sz, sz)
+  }
+  // Cara furiosa: ojos rojos, cejas y ceño fruncido
+  g.fillStyle = '#e8271a'
+  g.beginPath(); g.arc(24, cy - 3, 4.5, 0, Math.PI * 2); g.fill()
+  g.beginPath(); g.arc(38, cy - 3, 4.5, 0, Math.PI * 2); g.fill()
+  g.fillStyle = '#2a0a0a'
+  g.fillRect(24, cy - 4, 3, 3); g.fillRect(36, cy - 4, 3, 3)
+  g.fillStyle = '#ffffff'
+  g.fillRect(21, cy - 7, 1, 1); g.fillRect(35, cy - 7, 1, 1)
+  g.strokeStyle = '#2a0a0a'
+  g.lineWidth = 2
+  g.beginPath()
+  g.moveTo(16, cy - 12); g.lineTo(28, cy - 7)
+  g.moveTo(46, cy - 12); g.lineTo(34, cy - 7)
+  g.stroke()
+  g.beginPath()
+  g.arc(31, cy + 14, 8, Math.PI * 1.15, Math.PI * 1.85)
+  g.stroke()
+
+  // Cornisa de piedra con borde dorado
+  P.rect(0, 0, PIPE_W + 10, CROWN_H, '#a8844a')
+  P.rect(0, 0, PIPE_W + 10, 3, '#e6c88a')
+  P.rect(0, 3, PIPE_W + 10, 1, '#c9a56a')
+  P.rect(0, 9, PIPE_W + 10, 4, '#d9a441')
+  for (let x = 2; x < PIPE_W + 10; x += 8) P.rect(x, 14, 5, 5, '#8a6a38')
+  P.rect(0, 22, PIPE_W + 10, 4, '#5a3f1a')
   return c
 }
 
@@ -664,8 +666,8 @@ function drawPanel(ctx, x, y, w, h, radius = 6) {
 
 function drawStartScreen(ctx, flashAlpha) {
   const logoY = 110
-  neonText(ctx, 'FLAPPY', W / 2, logoY, 36, '#ffe44e', '#ff8c1a')
-  neonText(ctx, 'BIRD', W / 2, logoY + 50, 36, '#ffffff', '#ff3cac')
+  neonText(ctx, 'BRIGHTSTAR', W / 2, logoY, 26, '#ffe44e', '#ff8c1a')
+  neonText(ctx, 'GAME', W / 2, logoY + 50, 36, '#ffffff', '#ff3cac')
   neonText(ctx, 'GET READY!', W / 2, 335, 16, '#7ef0ff', '#00b7ff')
 
   if (flashAlpha > 0.3) {
@@ -759,7 +761,7 @@ export default function FlappyBird() {
   }), [])
 
   const spawnPipe = useCallback((n) => {
-    const gap = n <= EASY_COUNT ? EASY_GAP : PIPE_GAP
+    const gap = n <= EASY_COUNT ? GAP_EASIEST : n <= EASY_COUNT * 2 ? GAP_EASY : PIPE_GAP
     const minTopH = 60
     const maxTopH = GROUND_Y - gap - 60
     const topH = Math.floor(Math.random() * (maxTopH - minTopH)) + minTopH
