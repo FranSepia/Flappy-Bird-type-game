@@ -1,4 +1,9 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef, useCallback, useState } from 'react'
+import { HERO_IDS, HERO_META, HERO_HIT_CIRCLES, HERO_ANCHOR_X, drawHero } from './heroes'
+import {
+  MAX_NAME, normalizeName, getScores, topScores, rankOf,
+  submitScore, getPlayerName, setPlayerName,
+} from './leaderboard'
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const W = 320
@@ -32,8 +37,12 @@ const GIRL_ANCHOR_Y = 0.5024
 // Se rotan igual que el sprite. Usa ?debug en la URL para verlos dibujados.
 const HIT_CIRCLES = {
   bird:  [[22, -9, 8], [-2, -17, 6], [8, 6, 10], [-8, 10, 7], [-14, 19, 5]],
+  // Los tres héroes comparten silueta, así que comparten hitbox.
+  scarlet: HERO_HIT_CIRCLES,
+  aegis:   HERO_HIT_CIRCLES,
+  tempest: HERO_HIT_CIRCLES,
 }
-const TILT = { bird: 0.06 }
+const TILT = { bird: 0.06, scarlet: 0.06, aegis: 0.06, tempest: 0.06 }
 const QUERY = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams()
 const DEBUG = QUERY.has('debug')
 const DEBUG_GOD = DEBUG && QUERY.has('god')         // ?debug&god: sin colisiones
@@ -664,16 +673,174 @@ function drawPanel(ctx, x, y, w, h, radius = 6) {
   ctx.restore()
 }
 
-function drawStartScreen(ctx, flashAlpha) {
-  const logoY = 110
-  neonText(ctx, 'BRIGHTSTAR', W / 2, logoY, 26, '#ffe44e', '#ff8c1a')
-  neonText(ctx, 'GAME', W / 2, logoY + 50, 36, '#ffffff', '#ff3cac')
-  neonText(ctx, 'GET READY!', W / 2, 335, 16, '#7ef0ff', '#00b7ff')
+// ─── PANTALLA DE INICIO ───────────────────────────────────────────────────────
+// De arriba abajo: logo, fila del nombre, tabla de puntajes, TAP TO START y el
+// selector de héroes. El suelo arranca en GROUND_Y (456): todo entra arriba.
+
+// El personaje flota a la izquierda (llega hasta x=104), así que la fila del
+// nombre y la tabla van corridas a la derecha para no taparlo.
+const NAME_ROW = { x: 110, y: 126, w: 200, h: 32 }
+const NAME_BTN = { x: NAME_ROW.x + NAME_ROW.w - 66, y: NAME_ROW.y + 6, w: 54, h: 20 }
+const LB_PANEL = { x: 110, y: 170, w: 200, h: 150 }
+const LB_ROWS = 5
+
+const SEL_W = 70
+const SEL_H = 58
+const SEL_GAP = 6
+const SEL_Y = 386
+const SEL_X0 = (W - (HERO_IDS.length * SEL_W + (HERO_IDS.length - 1) * SEL_GAP)) / 2
+
+function inRect(r, lx, ly) {
+  return lx >= r.x && lx <= r.x + r.w && ly >= r.y && ly <= r.y + r.h
+}
+
+function selSlot(i) {
+  return { x: SEL_X0 + i * (SEL_W + SEL_GAP), y: SEL_Y, w: SEL_W, h: SEL_H }
+}
+
+// Devuelve el id del héroe tocado, o null si el toque fue fuera del selector.
+function selHitTest(lx, ly) {
+  for (let i = 0; i < HERO_IDS.length; i++) {
+    if (inRect(selSlot(i), lx, ly)) return HERO_IDS[i]
+  }
+  return null
+}
+
+function heroLabel(id) {
+  return id === 'bird' ? 'BRIGHT' : HERO_META[id].name
+}
+
+function loadCharacter() {
+  const saved = localStorage.getItem('fb_char')
+  return HERO_IDS.includes(saved) ? saved : 'bird'
+}
+
+// Retrato chico dentro de una casilla del selector.
+function drawPortrait(ctx, id, imgs, cx, cy) {
+  const src = imgs[id]
+  if (!src) return
+  const anchorX = id === 'bird' ? GIRL_ANCHOR_X : HERO_ANCHOR_X
+  const s = 58 / src.width
+  ctx.drawImage(src, cx - src.width * s * anchorX, cy - src.height * s * 0.5, src.width * s, src.height * s)
+}
+
+// Fila del nombre, con su botón de CAMBIAR. Se puede tocar el botón o la fila.
+function drawNameRow(ctx, playerName) {
+  const r = NAME_ROW
+  drawPanel(ctx, r.x, r.y, r.w, r.h, 6)
+
+  ctx.save()
+  ctx.textAlign = 'left'
+  ctx.font = `6px ${FONT}`
+  ctx.fillStyle = '#ffb3f0'
+  ctx.fillText('JUGADOR', r.x + 12, r.y + 13)
+
+  ctx.font = `10px ${FONT}`
+  ctx.fillStyle = playerName ? '#ffe44e' : '#9b8bc9'
+  ctx.fillText(playerName || 'SIN NOMBRE', r.x + 12, r.y + 26)
+  ctx.restore()
+
+  const b = NAME_BTN
+  ctx.save()
+  ctx.fillStyle = '#c04dff'
+  ctx.strokeStyle = '#ff7ad9'
+  ctx.lineWidth = 1
+  ctx.fillRect(b.x, b.y, b.w, b.h)
+  ctx.strokeRect(b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1)
+  ctx.font = `6px ${FONT}`
+  ctx.textAlign = 'center'
+  ctx.fillStyle = '#ffffff'
+  ctx.fillText('CAMBIAR', b.x + b.w / 2, b.y + 13)
+  ctx.restore()
+}
+
+// Tabla de puntajes estilo arcade: puesto, nombre y score.
+function drawLeaderboard(ctx, playerName) {
+  const p = LB_PANEL
+  drawPanel(ctx, p.x, p.y, p.w, p.h, 8)
+  neonText(ctx, 'HIGH SCORES', p.x + p.w / 2, p.y + 22, 9, '#7ef0ff', '#00b7ff')
+
+  ctx.save()
+  ctx.strokeStyle = 'rgba(255, 122, 217, 0.6)'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(p.x + 12, p.y + 32)
+  ctx.lineTo(p.x + p.w - 12, p.y + 32)
+  ctx.stroke()
+  ctx.restore()
+
+  const key = normalizeName(playerName)
+  const medal = ['#ffd23f', '#d8d8e8', '#e08a3c']   // oro, plata, bronce
+
+  const row = (e, place, y, mine) => {
+    ctx.fillStyle = mine ? '#7cffb2' : '#9b8bc9'
+    ctx.textAlign = 'left'
+    ctx.fillText(String(place), p.x + 12, y)
+    ctx.fillStyle = mine ? '#7cffb2' : (medal[place - 1] || '#cbbdf0')
+    ctx.fillText(e.name, p.x + 30, y)
+    ctx.textAlign = 'right'
+    ctx.fillText(String(e.score), p.x + p.w - 12, y)
+  }
+
+  ctx.save()
+  ctx.font = `8px ${FONT}`
+  topScores(LB_ROWS).forEach((e, i) => {
+    row(e, i + 1, p.y + 48 + i * 17, key && normalizeName(e.name) === key)
+  })
+
+  // Si el jugador quedó fuera del top, su puesto va abajo de todo.
+  const rank = rankOf(playerName)
+  if (rank > LB_ROWS) {
+    ctx.strokeStyle = 'rgba(255, 122, 217, 0.35)'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(p.x + 12, p.y + 124)
+    ctx.lineTo(p.x + p.w - 12, p.y + 124)
+    ctx.stroke()
+    row(getScores()[rank - 1], rank, p.y + 140, true)
+  }
+  ctx.restore()
+}
+
+function drawStartScreen(ctx, flashAlpha, character, imgs, playerName) {
+  neonText(ctx, 'BRIGHTSTAR', W / 2, 70, 24, '#ffe44e', '#ff8c1a')
+  neonText(ctx, 'GAME', W / 2, 110, 32, '#ffffff', '#ff3cac')
+
+  drawNameRow(ctx, playerName)
+  drawLeaderboard(ctx, playerName)
 
   if (flashAlpha > 0.3) {
-    drawPanel(ctx, W / 2 - 110, 360, 220, 56, 8)
-    neonText(ctx, 'TAP TO START', W / 2, 394, 12, '#ffffff', '#c04dff')
+    drawPanel(ctx, W / 2 - 110, 330, 220, 46, 8)
+    neonText(ctx, 'TAP TO START', W / 2, 360, 12, '#ffffff', '#c04dff')
   }
+
+  HERO_IDS.forEach((id, i) => {
+    const r = selSlot(i)
+    const on = id === character
+
+    ctx.save()
+    ctx.globalAlpha = on ? 1 : 0.5
+    drawPanel(ctx, r.x, r.y, r.w, r.h, 6)
+    drawPortrait(ctx, id, imgs, r.x + r.w / 2, r.y + 24)
+    ctx.restore()
+
+    ctx.save()
+    ctx.font = `6px ${FONT}`
+    ctx.textAlign = 'center'
+    ctx.fillStyle = on ? '#ffe44e' : '#a596cc'
+    ctx.fillText(heroLabel(id), r.x + r.w / 2, r.y + r.h - 8)
+    ctx.restore()
+
+    if (on) {
+      ctx.save()
+      ctx.strokeStyle = '#ffe44e'
+      ctx.shadowColor = '#ff8c1a'
+      ctx.shadowBlur = 8
+      ctx.lineWidth = 2
+      ctx.strokeRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2)
+      ctx.restore()
+    }
+  })
 }
 
 function drawGameOver(ctx, score, best) {
@@ -733,9 +900,34 @@ export default function FlappyBird() {
   const lastTimeRef = useRef(null)
   const pipeTimerRef = useRef(0)
 
+  const [playerName, setName] = useState(() => getPlayerName())
+  const [editingName, setEditingName] = useState(false)
+  const [nameDraft, setNameDraft] = useState('')
+  const [canvasSize, setCanvasSize] = useState({ w: W, h: H })
+
+  // El bucle de render no se recrea cuando cambia el nombre, así que lo lee de
+  // un ref en vez de capturarlo.
+  const nameRef = useRef(playerName)
+  useEffect(() => { nameRef.current = playerName }, [playerName])
+
+  // Primera visita: se pide el nombre antes de jugar.
+  useEffect(() => {
+    if (!getPlayerName()) setEditingName(true)
+  }, [])
+
+  const openNameEditor = useCallback(() => {
+    setNameDraft(nameRef.current)
+    setEditingName(true)
+  }, [])
+
+  const commitName = useCallback(() => {
+    setName(setPlayerName(nameDraft))
+    setEditingName(false)
+  }, [nameDraft])
+
   const initState = useCallback(() => ({
     phase: 'start',
-    character: 'bird',  // Brightstar, el único personaje
+    character: loadCharacter(),  // Brightstar o uno de los tres héroes
     birdY: H / 2 - 40,
     birdVel: 0,
     pipes: [],
@@ -755,6 +947,7 @@ export default function FlappyBird() {
     flashAlpha: 1,
     flashTimer: 0,
     deadTimer: 0,
+    scoreSent: false,
     scored: new Set(),
     pipeCount: DEBUG_SKIP,
     bgX: 0,
@@ -819,11 +1012,14 @@ export default function FlappyBird() {
 
   // Load images on mount
   useEffect(() => {
-    const keys = ['bird', 'logo']
     const paths = {
       bird:      '/assets/retro/girl.png',
       logo:      '/assets/retro/logo_banner.png',
+      scarlet:   HERO_META.scarlet.src,
+      aegis:     HERO_META.aegis.src,
+      tempest:   HERO_META.tempest.src,
     }
+    const keys = Object.keys(paths)
     keys.forEach(async (k) => {
       // Reintenta: por un túnel o red lenta alguna petición puede fallar
       for (let attempt = 0; attempt < 6; attempt++) {
@@ -839,17 +1035,58 @@ export default function FlappyBird() {
     const canvas = canvasRef.current
     const ctx = canvas.getContext('2d')
 
+    const pickCharacter = (id) => {
+      stateRef.current.character = id
+      localStorage.setItem('fb_char', id)
+    }
+
+    // En la pantalla de inicio hay zonas que no hacen saltar: la fila del
+    // nombre y el selector de héroes.
+    const tappedUI = (clientX, clientY) => {
+      const s = stateRef.current
+      if (!s || s.phase !== 'start') return false
+      const rect = canvas.getBoundingClientRect()
+      const lx = (clientX - rect.left) / rect.width * W
+      const ly = (clientY - rect.top) / rect.height * H
+
+      if (inRect(NAME_ROW, lx, ly)) {
+        openNameEditor()
+        return true
+      }
+      const id = selHitTest(lx, ly)
+      if (id) {
+        pickCharacter(id)
+        return true
+      }
+      return false
+    }
+
     const onKey = (e) => {
+      // Mientras se escribe el nombre, el teclado no controla el juego.
+      if (document.activeElement && document.activeElement.tagName === 'INPUT') return
+      const s = stateRef.current
+      if (s && s.phase === 'start' && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) {
+        e.preventDefault()
+        const step = e.code === 'ArrowRight' ? 1 : -1
+        const i = HERO_IDS.indexOf(s.character)
+        pickCharacter(HERO_IDS[(i + step + HERO_IDS.length) % HERO_IDS.length])
+        return
+      }
       if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
         e.preventDefault()
         jump()
       }
     }
-    const onTouch = (e) => { 
-      e.preventDefault(); 
-        jump() 
+    const onTouch = (e) => {
+      e.preventDefault()
+      const t = e.changedTouches[0]
+      if (t && tappedUI(t.clientX, t.clientY)) return
+      jump()
     }
-    const onClick = () => jump()
+    const onClick = (e) => {
+      if (tappedUI(e.clientX, e.clientY)) return
+      jump()
+    }
 
     window.addEventListener('keydown', onKey)
     canvas.addEventListener('touchstart', onTouch, { passive: false })
@@ -863,6 +1100,12 @@ export default function FlappyBird() {
       const s = stateRef.current
       const imgs = imgsRef.current
       const speed = PIPE_SPEED * (1 + Math.floor(s.score / 10) * 0.08)
+
+      const renderChar = (c, x, y, vel) => (
+        s.character === 'bird'
+          ? drawBirdImg(c, imgs, x, y, vel)
+          : drawHero(c, imgs[s.character], x, y, vel)
+      )
 
       // ── UPDATE ──
       if (s.phase === 'playing') {
@@ -955,6 +1198,11 @@ export default function FlappyBird() {
 
       if (s.phase === 'dead') {
         s.deadTimer++
+        // El puntaje entra a la tabla una sola vez, al morir.
+        if (!s.scoreSent) {
+          s.scoreSent = true
+          submitScore(nameRef.current, s.score)
+        }
         if (!s.isHidden) {
           s.birdVel += GRAVITY
           s.birdY = Math.min(s.birdY + s.birdVel, GROUND_Y - 24)
@@ -1040,7 +1288,7 @@ export default function FlappyBird() {
         if (s.rainbowBirdTimer && s.rainbowBirdTimer > 0) {
           ctx.filter = `hue-rotate(${(Date.now() / 4) % 360}deg) saturate(200%)`
         }
-        drawBirdImg(ctx, imgs, BIRD_X, s.birdY, Math.min(Math.max(s.birdVel, -5), 5))
+        renderChar(ctx, BIRD_X, s.birdY, Math.min(Math.max(s.birdVel, -5), 5))
         ctx.restore()
       }
 
@@ -1056,13 +1304,11 @@ export default function FlappyBird() {
         ctx.filter = `hue-rotate(${(Date.now() / 4) % 360}deg) saturate(200%)`
       }
 
-      const renderChar = (ctx, x, y, vel) => drawBirdImg(ctx, imgs, x, y, vel)
-
       if (s.phase === 'start') {
         const floatY = s.birdY + Math.sin(Date.now() / 300) * 6
         renderChar(ctx, BIRD_X, floatY, 0)
         ctx.restore()
-        drawStartScreen(ctx, s.flashAlpha)
+        drawStartScreen(ctx, s.flashAlpha, s.character, imgs, nameRef.current)
       } else {
         if (!s.isHidden && s.phase !== 'pipe_enter') {
           renderChar(ctx, BIRD_X, s.birdY, Math.min(Math.max(s.birdVel, -5), 5))
@@ -1107,14 +1353,12 @@ export default function FlappyBird() {
       canvas.removeEventListener('touchstart', onTouch)
       canvas.removeEventListener('mousedown', onClick)
     }
-  }, [initState, spawnPipe, checkCollision, jump])
+  }, [initState, spawnPipe, checkCollision, jump, openNameEditor])
 
   useEffect(() => {
-    const canvas = canvasRef.current
     const resize = () => {
       const scale = Math.min(window.innerWidth / W, window.innerHeight / H)
-      canvas.style.width = `${W * scale}px`
-      canvas.style.height = `${H * scale}px`
+      setCanvasSize({ w: W * scale, h: H * scale })
     }
     resize()
     window.addEventListener('resize', resize)
@@ -1122,11 +1366,65 @@ export default function FlappyBird() {
   }, [])
 
   return (
-    <canvas
-      ref={canvasRef}
-      width={W * SCALE}
-      height={H * SCALE}
-      style={{ display: 'block', cursor: 'pointer' }}
-    />
+    <div style={{ position: 'relative', width: canvasSize.w, height: canvasSize.h }}>
+      <canvas
+        ref={canvasRef}
+        width={W * SCALE}
+        height={H * SCALE}
+        style={{ display: 'block', width: '100%', height: '100%', cursor: 'pointer' }}
+      />
+
+      {editingName && (
+        <div
+          style={{
+            position: 'absolute', inset: 0, display: 'flex',
+            alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(10, 4, 32, 0.85)',
+          }}
+        >
+          <form
+            onSubmit={(e) => { e.preventDefault(); commitName() }}
+            style={{
+              width: '80%', padding: '18px 16px', textAlign: 'center',
+              fontFamily: FONT, background: '#1a0b3d',
+              border: '2px solid #c04dff', borderRadius: 8,
+              boxShadow: '0 0 14px #c04dff',
+            }}
+          >
+            <div style={{ fontSize: 10, color: '#ffb3f0', marginBottom: 14 }}>TU NOMBRE</div>
+
+            <input
+              autoFocus
+              value={nameDraft}
+              maxLength={MAX_NAME}
+              onChange={(e) => setNameDraft(e.target.value.toUpperCase().slice(0, MAX_NAME))}
+              style={{
+                width: '100%', boxSizing: 'border-box', padding: 8,
+                fontFamily: FONT, fontSize: 12, textAlign: 'center',
+                color: '#ffe44e', background: '#0a0420',
+                border: '1px solid #ff7ad9', borderRadius: 4, outline: 'none',
+              }}
+            />
+
+            <div style={{ fontSize: 6, color: '#9b8bc9', margin: '12px 0 14px', lineHeight: 1.7 }}>
+              SIN CONTRASENA<br />MISMO NOMBRE = MISMO JUGADOR
+            </div>
+
+            <button
+              type="submit"
+              disabled={!nameDraft.trim()}
+              style={{
+                fontFamily: FONT, fontSize: 10, padding: '8px 18px', color: '#fff',
+                background: nameDraft.trim() ? '#c04dff' : '#4a3a6a',
+                border: 'none', borderRadius: 4,
+                cursor: nameDraft.trim() ? 'pointer' : 'default',
+              }}
+            >
+              LISTO
+            </button>
+          </form>
+        </div>
+      )}
+    </div>
   )
 }
