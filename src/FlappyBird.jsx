@@ -1,5 +1,8 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
-import { HERO_IDS, HERO_META, HERO_HIT_CIRCLES, HERO_ANCHOR_X, drawHero } from './heroes'
+import {
+  HERO_IDS, HERO_META, HERO_ANCHOR_X, HERO_BASE_SCALE,
+  heroScale, heroHitCircles, drawHero,
+} from './heroes'
 import {
   MAX_NAME, normalizeName, getScores, topScores, rankOf,
   submitScore, getPlayerName, setPlayerName,
@@ -41,10 +44,11 @@ const GIRL_ANCHOR_Y = 0.5024
 // Se rotan igual que el sprite. Usa ?debug en la URL para verlos dibujados.
 const HIT_CIRCLES = {
   bird:  [[22, -9, 8], [-2, -17, 6], [8, 6, 10], [-8, 10, 7], [-14, 19, 5]],
-  // Los tres héroes comparten silueta, así que comparten hitbox.
-  scarlet: HERO_HIT_CIRCLES,
-  aegis:   HERO_HIT_CIRCLES,
-  tempest: HERO_HIT_CIRCLES,
+  // Los tres comparten silueta, pero cada uno se dibuja a su escala, así que el
+  // hitbox se ajusta a la suya.
+  scarlet: heroHitCircles('scarlet'),
+  aegis:   heroHitCircles('aegis'),
+  tempest: heroHitCircles('tempest'),
 }
 const TILT = { bird: 0.06, scarlet: 0.06, aegis: 0.06, tempest: 0.06 }
 const QUERY = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams()
@@ -728,7 +732,10 @@ function drawPortrait(ctx, id, imgs, cx, cy) {
   const src = imgs[id]
   if (!src) return
   const anchorX = id === 'bird' ? GIRL_ANCHOR_X : HERO_ANCHOR_X
-  const s = 58 / src.width
+  // El retrato también usa la escala relativa del héroe, para que en el
+  // selector se vean del mismo tamaño que se ven jugando.
+  const ratio = id === 'bird' ? 1 : heroScale(id) / HERO_BASE_SCALE
+  const s = (58 / src.width) * ratio
   ctx.drawImage(src, cx - src.width * s * anchorX, cy - src.height * s * 0.5, src.width * s, src.height * s)
 }
 
@@ -1120,7 +1127,7 @@ export default function FlappyBird() {
       const renderChar = (c, x, y, vel) => (
         s.character === 'bird'
           ? drawBirdImg(c, imgs, x, y, vel)
-          : drawHero(c, imgs[s.character], x, y, vel)
+          : drawHero(c, s.character, imgs[s.character], x, y, vel)
       )
 
       // ── UPDATE ──

@@ -4,26 +4,29 @@
 
 export const HERO_IDS = ['bird', 'scarlet', 'aegis', 'tempest']
 
+// Cada sprite trae el cuerpo de un tamaño distinto dentro de la misma imagen de
+// 200x133, así que con una escala común se veían de tamaños diferentes: medido,
+// había hasta 35% de diferencia de altura entre Aegis y Brightstar.
+//
+// La escala de cada uno sale de igualar la MASA VISUAL (la media geométrica de
+// ancho por alto del cuerpo) con la de Brightstar, que es 43.9 px. No se iguala
+// la altura sola porque Brightstar vuela en pose compacta y los otros tres en
+// pose más horizontal: emparejar alturas dejaría a los anchos enormes.
 export const HERO_META = {
-  scarlet: { name: 'SCARLET', src: '/assets/retro/scarlet.png' },
-  aegis:   { name: 'AEGIS',   src: '/assets/retro/aegis.png' },
-  tempest: { name: 'TEMPEST', src: '/assets/retro/tempest.png' },
+  scarlet: { name: 'SCARLET', src: '/assets/retro/scarlet.png', scale: 0.508 },
+  aegis:   { name: 'AEGIS',   src: '/assets/retro/aegis.png',   scale: 0.575 },
+  tempest: { name: 'TEMPEST', src: '/assets/retro/tempest.png', scale: 0.535 },
 }
 
-// Los tres sprites son 200x133 y comparten composición: el cuerpo ocupa el
-// tercio derecho y la estela se extiende hacia atrás. Por eso un solo ancla y
-// una sola escala sirven para los tres.
-//
-// Ajuste fino: subir HERO_SCALE agranda al personaje; HERO_ANCHOR_X lo corre
-// hacia adelante/atrás respecto del punto de colisión, HERO_ANCHOR_Y hacia
-// arriba/abajo. Con ?debug en la URL se ven los círculos de colisión dibujados.
-export const HERO_SCALE = 0.545   // 200px -> ~109px en pantalla
+// Escala con la que se midieron los círculos de colisión de abajo.
+export const HERO_BASE_SCALE = 0.545
+
 export const HERO_ANCHOR_X = 0.75
 export const HERO_ANCHOR_Y = 0.47
 
-// Círculos de colisión [dx, dy, r] relativos al ancla, en píxeles de juego.
-// Misma pose en los tres, así que comparten hitbox.
-export const HERO_HIT_CIRCLES = [
+// Círculos de colisión [dx, dy, r] relativos al ancla, en píxeles de juego,
+// a HERO_BASE_SCALE. heroHitCircles() los ajusta a la escala de cada héroe.
+const BASE_HIT_CIRCLES = [
   [20, -6, 5],    // puño adelantado
   [16, -10, 7],   // cabeza
   [-1, -1, 10],   // torso
@@ -31,11 +34,22 @@ export const HERO_HIT_CIRCLES = [
   [-22, 11, 5],   // piernas
 ]
 
-export function drawHero(ctx, img, x, y, vel) {
+export function heroScale(id) {
+  return HERO_META[id] ? HERO_META[id].scale : HERO_BASE_SCALE
+}
+
+// El hitbox tiene que encoger y crecer junto con el sprite.
+export function heroHitCircles(id) {
+  const k = heroScale(id) / HERO_BASE_SCALE
+  return BASE_HIT_CIRCLES.map(([dx, dy, r]) => [dx * k, dy * k, r * k])
+}
+
+export function drawHero(ctx, id, img, x, y, vel) {
   if (!img) return
+  const scale = heroScale(id)
   const angle = Math.min(Math.max(vel * 0.06, -0.5), 1.2)
-  const w = img.width * HERO_SCALE
-  const h = img.height * HERO_SCALE
+  const w = img.width * scale
+  const h = img.height * scale
   ctx.save()
   ctx.translate(x, y)
   ctx.rotate(angle)

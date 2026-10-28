@@ -29,7 +29,7 @@ export const ENEMY_META = {
     tag: 'PAPERWORK NEVER STOPS',
     src: '/assets/retro/denibot.png',
     shot: 'paper',
-    volleyMs: 1250,
+    volleyMs: 1900,
     glow: '#ff3b3b',
     jet: ['#ff5a3c', '#ffd06a'],
     footDy: 61,
@@ -40,7 +40,7 @@ export const ENEMY_META = {
     tag: 'TIME IS MY WEAPON',
     src: '/assets/retro/clocktitan.png',
     shot: 'hand',
-    volleyMs: 1450,
+    volleyMs: 2100,
     glow: '#ffb021',
     jet: ['#ffb021', '#fff0b0'],
     footDy: 55,
@@ -155,8 +155,13 @@ export function updateEnemy(e, dt, targetY) {
     })
 
     if (n === 1) {
-      // Un solo proyectil: va derecho a tu altura, así que igual hay que moverse.
-      fire(targetY + (Math.random() - 0.5) * 36)
+      // Un solo proyectil: va al centro de la franja donde estás. Son tres
+      // franjas anchas y bien separadas (113 px entre centros), así que
+      // esquivar es cambiarse de franja, no ajustar por unos píxeles.
+      const bands = 3
+      const bandH = (LANE_HI - LANE_LO) / bands
+      const here = Math.max(0, Math.min(bands - 1, Math.floor((targetY - LANE_LO) / bandH)))
+      fire(LANE_LO + bandH * (here + 0.5))
     } else {
       // Varios: cubren todos los carriles menos uno, y ese hueco nunca cae en el
       // carril donde ya estás.
