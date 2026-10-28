@@ -1324,9 +1324,6 @@ export default function FlappyBird() {
       ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0)
       drawBackground(ctx, s.clouds, imgs, s.fireworksTimer > 0, s.bgX)
 
-      // El enemigo va en el fondo, detrás de los obstáculos.
-      if (s.enemy) drawEnemy(ctx, imgs[s.enemy.id], s.enemy)
-
       if (s.particles && s.particles.length > 0) {
         s.particles.forEach(p => {
           ctx.globalAlpha = Math.max(0, p.life)
@@ -1349,6 +1346,10 @@ export default function FlappyBird() {
       }
 
       drawGround(ctx, s.groundX)
+
+      // Va después del suelo: apoya los pies sobre la grilla en vez de quedar
+      // con las piernas tapadas por la banda del piso.
+      if (s.enemy) drawEnemy(ctx, imgs[s.enemy.id], s.enemy)
 
       s.pipes.forEach(p => {
         drawBuilding(ctx, imgs, p)

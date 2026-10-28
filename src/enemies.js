@@ -45,7 +45,12 @@ export const BOSS_REWARD = 10
 
 const SCALE = 0.9           // 200px de origen -> 180px en pantalla
 const HOME_X = 240          // bien a la derecha: deja pista para ver venir el tiro
-const HOME_Y = 236
+
+// Apoya los pies sobre la segunda línea de la grilla del suelo contando desde
+// abajo. La grilla se dibuja en y = GROUND_Y + GROUND_H * (i/5)^2, o sea en
+// 460, 474, 496, 528 y 568; la segunda desde abajo es 496.
+const FOOT_Y = 496
+const HOME_Y = FOOT_Y - (200 * SCALE) / 2
 const SLIDE_MS = 850
 const CHARGE_MS = 520       // aviso antes de cada andanada
 
@@ -80,12 +85,14 @@ export function createEnemy(id, cycle = 0) {
 export function enemyPos(e) {
   return {
     x: HOME_X + e.slide * (W + 150 - HOME_X),
-    y: HOME_Y + Math.sin(e.t / 540) * 9,
+    // Apoyado en el suelo, así que apenas respira en lugar de flotar.
+    y: HOME_Y + Math.sin(e.t / 540) * 3,
   }
 }
 
+// Arranca con un solo proyectil por andanada y sube muy de a poco.
 function volleySize(e) {
-  return Math.min(4, 2 + Math.floor(e.cycle / 2))
+  return Math.min(3, 1 + Math.floor(e.cycle / 3))
 }
 
 function speedMul(e) {
@@ -122,28 +129,34 @@ export function updateEnemy(e, dt, targetY) {
     e.charge = 0
     const p = enemyPos(e)
     const n = volleySize(e)
+    const launchY = p.y - 46        // a la altura del brazo, no de los pies
 
-    // La andanada cubre todos los carriles menos uno. Ese hueco nunca cae en el
-    // carril donde está el jugador: quedarse quieto no puede ser la respuesta.
-    const slots = n + 1
-    const slotH = (LANE_HI - LANE_LO) / slots
-    const here = Math.max(0, Math.min(slots - 1, Math.floor((targetY - LANE_LO) / slotH)))
-    let gap = Math.floor(Math.random() * slots)
-    if (gap === here) gap = (here + 1 + Math.floor(Math.random() * (slots - 1))) % slots
+    const fire = (aimY) => shots.push({
+      kind: meta.shot,
+      mul: speedMul(e),
+      x: p.x + 30,
+      y: launchY,
+      baseY: launchY,
+      aimY: Math.max(LANE_LO, Math.min(LANE_HI, aimY)),
+      travelled: 0,
+      rot: 0,
+      r: SHOTS[meta.shot].r,
+    })
 
-    for (let i = 0; i < slots; i++) {
-      if (i === gap) continue
-      shots.push({
-        kind: meta.shot,
-        mul: speedMul(e),
-        x: p.x + 30,
-        y: p.y - 10,
-        baseY: p.y - 10,
-        aimY: LANE_LO + slotH * (i + 0.5),
-        travelled: 0,
-        rot: 0,
-        r: SHOTS[meta.shot].r,
-      })
+    if (n === 1) {
+      // Un solo proyectil: va derecho a tu altura, así que igual hay que moverse.
+      fire(targetY + (Math.random() - 0.5) * 36)
+    } else {
+      // Varios: cubren todos los carriles menos uno, y ese hueco nunca cae en el
+      // carril donde ya estás.
+      const slots = n + 1
+      const slotH = (LANE_HI - LANE_LO) / slots
+      const here = Math.max(0, Math.min(slots - 1, Math.floor((targetY - LANE_LO) / slotH)))
+      let gap = Math.floor(Math.random() * slots)
+      if (gap === here) gap = (here + 1 + Math.floor(Math.random() * (slots - 1))) % slots
+      for (let i = 0; i < slots; i++) {
+        if (i !== gap) fire(LANE_LO + slotH * (i + 0.5))
+      }
     }
   }
 
@@ -186,32 +199,32 @@ export function shotHits(list, circles) {
   return false
 }
 
-// Propulsores: el enemigo vuela, así que tiene que verse por qué se sostiene.
+// Escapes a la altura de los pies. Ya no son propulsores de vuelo: ahora el
+// enemigo apoya en el suelo, así que son venteos cortos que delatan la máquina.
 function drawJets(ctx, e, p, h) {
   const [hot, core] = ENEMY_META[e.id].jet
-  const baseY = p.y + h * 0.42
+  const baseY = p.y + h * 0.44
   ctx.save()
-  for (const dx of [-30, 0, 30]) {
-    // Llama que late, con una fase distinta por propulsor.
-    const flick = 0.72 + Math.sin(e.t / 48 + dx) * 0.28
-    const len = (26 + Math.abs(dx) * 0.12) * flick
+  for (const dx of [-34, 34]) {
+    const flick = 0.6 + Math.sin(e.t / 42 + dx) * 0.4
+    const len = 11 * flick
     const x = p.x + dx
 
-    ctx.globalAlpha = 0.5
+    ctx.globalAlpha = 0.38
     ctx.fillStyle = hot
     ctx.beginPath()
-    ctx.moveTo(x - 9, baseY)
-    ctx.lineTo(x + 9, baseY)
+    ctx.moveTo(x - 11, baseY)
+    ctx.lineTo(x + 11, baseY)
     ctx.lineTo(x, baseY + len)
     ctx.closePath()
     ctx.fill()
 
-    ctx.globalAlpha = 0.95
+    ctx.globalAlpha = 0.8
     ctx.fillStyle = core
     ctx.beginPath()
-    ctx.moveTo(x - 4, baseY)
-    ctx.lineTo(x + 4, baseY)
-    ctx.lineTo(x, baseY + len * 0.62)
+    ctx.moveTo(x - 5, baseY)
+    ctx.lineTo(x + 5, baseY)
+    ctx.lineTo(x, baseY + len * 0.6)
     ctx.closePath()
     ctx.fill()
   }
