@@ -1,10 +1,15 @@
 // ─── ENEMIGOS ─────────────────────────────────────────────────────────────────
-// Cada enemigo manda en su tema: entra cuando empieza su tanda de 10 obstáculos,
-// te hostiga desde el fondo y se va cuando cambia el tema. No tienen vida ni se
-// derrotan — la corrida sigue siendo infinita, ellos solo la ponen tensa.
+// Los enemigos no conviven con las columnas: son un encuentro aparte.
 //
-// El tema 0 (edificios) queda sin enemigo a propósito: sirve de respiro y hace
-// que las otras dos tandas peguen más fuerte.
+// Al terminar una tanda de 10 columnas de un tema con enemigo, las columnas
+// dejan de salir, el enemigo entra volando y durante el tiempo equivalente a
+// 5 columnas te bombardea. Sobrevivís, se va, cobrás BOSS_REWARD y vuelven las
+// columnas. No tiene vida ni se derrota: la corrida sigue siendo infinita.
+//
+// Tanda 10 (edificios) no tiene enemigo y queda de respiro.
+// Tanda 20 (papeleo)  -> DENI-BOT
+// Tanda 30 (reloj)    -> CLOCKTITAN
+// Después se repite, un poco más difícil cada vuelta.
 
 const W = 320
 
@@ -19,88 +24,128 @@ export const ENEMY_META = {
     tag: 'PAPERWORK NEVER STOPS',
     src: '/assets/retro/denibot.png',
     shot: 'paper',
-    fireMs: 1900,
+    volleyMs: 1250,
     glow: '#ff3b3b',
+    jet: ['#ff5a3c', '#ffd06a'],
   },
   clocktitan: {
     name: 'CLOCKTITAN',
     tag: 'TIME IS MY WEAPON',
     src: '/assets/retro/clocktitan.png',
     shot: 'hand',
-    fireMs: 2200,
+    volleyMs: 1450,
     glow: '#ffb021',
+    jet: ['#ffb021', '#fff0b0'],
   },
 }
 
-const SCALE = 0.78          // 200px de origen -> 156px en pantalla
-const HOME_X = 236          // centro del enemigo cuando está en posición
-const HOME_Y = 232
-const SLIDE_MS = 900        // entrada y salida
-const CHARGE_MS = 480       // aviso antes de disparar
+// El encuentro dura lo mismo que 5 columnas (PIPE_INTERVAL = 1500 ms).
+export const BOSS_MS = 7500
+export const BOSS_REWARD = 10
 
-// Perfil de cada proyectil. Los papeles son lentos y ondean; las agujas van
-// rectas y rápido. Esa diferencia es lo que hace que los dos temas se sientan
-// distintos aunque el esquema sea el mismo.
+const SCALE = 0.95          // 200px de origen -> 190px en pantalla
+const HOME_X = 228
+const HOME_Y = 236
+const SLIDE_MS = 850
+const CHARGE_MS = 520       // aviso antes de cada andanada
+
+// Proyectiles grandes y lentos: se esquivan leyendo la trayectoria, no de reflejo.
 const SHOTS = {
-  paper: { speed: 150, r: 7, wobble: 26, spin: 0.004 },
-  hand:  { speed: 265, r: 6, wobble: 0, spin: 0 },
+  paper: { speed: 104, r: 13, wobble: 30, spin: 0.0028, size: 26 },
+  hand:  { speed: 158, r: 11, wobble: 0, spin: 0, size: 24 },
 }
 
-export function createEnemy(id) {
-  return { id, t: 0, phase: 'in', slide: 1, fireTimer: -600, charge: 0 }
-}
+// Franja jugable donde se reparten los carriles de la andanada.
+const LANE_LO = 70
+const LANE_HI = 410
 
 const easeOut = (t) => 1 - (1 - t) ** 3
 
-// Posición actual: fuera de pantalla a la derecha cuando slide = 1.
-export function enemyPos(e) {
-  return { x: HOME_X + e.slide * (W + 140 - HOME_X), y: HOME_Y + Math.sin(e.t / 520) * 7 }
+// cycle = cuántos encuentros ya peleaste. Sube la dificultad de a poco.
+export function createEnemy(id, cycle = 0) {
+  return {
+    id,
+    cycle,
+    t: 0,
+    phase: 'in',
+    slide: 1,
+    fightMs: 0,
+    fireTimer: 0,
+    charge: 0,
+  }
 }
 
-// Avanza el enemigo. Devuelve los proyectiles nuevos que disparó en este frame.
+export function enemyPos(e) {
+  return {
+    x: HOME_X + e.slide * (W + 150 - HOME_X),
+    y: HOME_Y + Math.sin(e.t / 540) * 9,
+  }
+}
+
+function volleySize(e) {
+  return Math.min(4, 2 + Math.floor(e.cycle / 2))
+}
+
+function speedMul(e) {
+  return 1 + e.cycle * 0.06
+}
+
+// Avanza el enemigo. Devuelve { shots, done }: done avisa que terminó la pelea.
 export function updateEnemy(e, dt, targetY) {
   e.t += dt
   const shots = []
+  const meta = ENEMY_META[e.id]
 
   if (e.phase === 'in') {
     e.slide = Math.max(0, e.slide - dt / SLIDE_MS)
-    if (e.slide === 0) e.phase = 'idle'
-  } else if (e.phase === 'out') {
-    e.slide = Math.min(1, e.slide + dt / SLIDE_MS)
-    return shots
+    if (e.slide === 0) e.phase = 'fight'
+    return { shots, done: false }
   }
 
-  if (e.phase !== 'idle') return shots
+  if (e.phase === 'out') {
+    e.slide = Math.min(1, e.slide + dt / SLIDE_MS)
+    return { shots, done: false }
+  }
 
-  const meta = ENEMY_META[e.id]
+  // ── Peleando ──
+  e.fightMs += dt
   e.fireTimer += dt
 
-  // Carga: el enemigo destella antes de tirar, así el disparo nunca es injusto.
-  e.charge = e.fireTimer > meta.fireMs - CHARGE_MS
-    ? (e.fireTimer - (meta.fireMs - CHARGE_MS)) / CHARGE_MS
+  e.charge = e.fireTimer > meta.volleyMs - CHARGE_MS
+    ? (e.fireTimer - (meta.volleyMs - CHARGE_MS)) / CHARGE_MS
     : 0
 
-  if (e.fireTimer >= meta.fireMs) {
+  if (e.fireTimer >= meta.volleyMs) {
     e.fireTimer = 0
     e.charge = 0
     const p = enemyPos(e)
-    const cfg = SHOTS[meta.shot]
-    // Apunta a la altura del jugador con una desviación chica: hay que
-    // esquivarlo, pero no persigue.
-    const aim = targetY + (Math.random() - 0.5) * 70
-    shots.push({
-      kind: meta.shot,
-      x: p.x - 58,
-      y: p.y - 6,
-      baseY: p.y - 6,
-      aimY: aim,
-      travelled: 0,
-      rot: 0,
-      r: cfg.r,
-    })
+    const n = volleySize(e)
+
+    // La andanada cubre todos los carriles menos uno. Ese hueco nunca cae en el
+    // carril donde está el jugador: quedarse quieto no puede ser la respuesta.
+    const slots = n + 1
+    const slotH = (LANE_HI - LANE_LO) / slots
+    const here = Math.max(0, Math.min(slots - 1, Math.floor((targetY - LANE_LO) / slotH)))
+    let gap = Math.floor(Math.random() * slots)
+    if (gap === here) gap = (here + 1 + Math.floor(Math.random() * (slots - 1))) % slots
+
+    for (let i = 0; i < slots; i++) {
+      if (i === gap) continue
+      shots.push({
+        kind: meta.shot,
+        mul: speedMul(e),
+        x: p.x - 62,
+        y: p.y - 10,
+        baseY: p.y - 10,
+        aimY: LANE_LO + slotH * (i + 0.5),
+        travelled: 0,
+        rot: 0,
+        r: SHOTS[meta.shot].r,
+      })
+    }
   }
 
-  return shots
+  return { shots, done: e.fightMs >= BOSS_MS }
 }
 
 export function startExit(e) {
@@ -111,27 +156,24 @@ export function enemyGone(e) {
   return e.phase === 'out' && e.slide >= 1
 }
 
-// Avanza los proyectiles y descarta los que salieron de pantalla.
 export function updateShots(list, dt) {
   const alive = []
   for (const s of list) {
     const cfg = SHOTS[s.kind]
-    const step = cfg.speed * (dt / 1000)
+    const step = cfg.speed * s.mul * (dt / 1000)
     s.x -= step
     s.travelled += step
     s.rot += cfg.spin * dt
 
-    // Interpola hacia la altura apuntada y, si ondea, le suma el vaivén.
-    const k = Math.min(1, s.travelled / 240)
+    const k = Math.min(1, s.travelled / 260)
     s.y = s.baseY + (s.aimY - s.baseY) * easeOut(k)
-    if (cfg.wobble) s.y += Math.sin(s.travelled / 34) * cfg.wobble * (1 - k * 0.5)
+    if (cfg.wobble) s.y += Math.sin(s.travelled / 38) * cfg.wobble * (1 - k * 0.55)
 
-    if (s.x > -30) alive.push(s)
+    if (s.x > -40) alive.push(s)
   }
   return alive
 }
 
-// ¿Algún proyectil toca al personaje? Recibe los círculos de colisión del jugador.
 export function shotHits(list, circles) {
   for (const s of list) {
     for (const c of circles) {
@@ -141,56 +183,88 @@ export function shotHits(list, circles) {
   return false
 }
 
+// Propulsores: el enemigo vuela, así que tiene que verse por qué se sostiene.
+function drawJets(ctx, e, p, h) {
+  const [hot, core] = ENEMY_META[e.id].jet
+  const baseY = p.y + h * 0.42
+  ctx.save()
+  for (const dx of [-30, 0, 30]) {
+    // Llama que late, con una fase distinta por propulsor.
+    const flick = 0.72 + Math.sin(e.t / 48 + dx) * 0.28
+    const len = (26 + Math.abs(dx) * 0.12) * flick
+    const x = p.x + dx
+
+    ctx.globalAlpha = 0.5
+    ctx.fillStyle = hot
+    ctx.beginPath()
+    ctx.moveTo(x - 9, baseY)
+    ctx.lineTo(x + 9, baseY)
+    ctx.lineTo(x, baseY + len)
+    ctx.closePath()
+    ctx.fill()
+
+    ctx.globalAlpha = 0.95
+    ctx.fillStyle = core
+    ctx.beginPath()
+    ctx.moveTo(x - 4, baseY)
+    ctx.lineTo(x + 4, baseY)
+    ctx.lineTo(x, baseY + len * 0.62)
+    ctx.closePath()
+    ctx.fill()
+  }
+  ctx.restore()
+}
+
 export function drawEnemy(ctx, img, e) {
   if (!img) return
   const p = enemyPos(e)
   const w = img.width * SCALE
   const h = img.height * SCALE
 
+  drawJets(ctx, e, p, h)
+
   ctx.save()
-  // Va en el fondo: apenas translúcido para que no compita con los obstáculos.
-  ctx.globalAlpha = 0.92
   if (e.charge > 0) {
     ctx.shadowColor = ENEMY_META[e.id].glow
-    ctx.shadowBlur = 6 + e.charge * 26
+    ctx.shadowBlur = 8 + e.charge * 30
   }
   ctx.drawImage(img, p.x - w / 2, p.y - h / 2, w, h)
   ctx.restore()
 }
 
 function drawPaper(ctx, s) {
+  const u = SHOTS.paper.size / 2
   ctx.save()
   ctx.translate(s.x, s.y)
   ctx.rotate(s.rot)
   ctx.fillStyle = '#1a0d2e'
-  ctx.fillRect(-8, -10, 16, 20)
+  ctx.fillRect(-u, -u - 2, u * 2, u * 2 + 4)
   ctx.fillStyle = '#efe6cf'
-  ctx.fillRect(-7, -9, 14, 18)
+  ctx.fillRect(-u + 2, -u, u * 2 - 4, u * 2)
   ctx.fillStyle = '#b9ac8d'
-  ctx.fillRect(-5, -5, 10, 1)
-  ctx.fillRect(-5, -1, 10, 1)
+  ctx.fillRect(-u + 5, -u + 5, u * 2 - 10, 2)
+  ctx.fillRect(-u + 5, -u + 11, u * 2 - 10, 2)
   ctx.fillStyle = '#d02030'
-  ctx.fillRect(-5, 3, 10, 4)
+  ctx.fillRect(-u + 5, u - 9, u * 2 - 10, 6)
   ctx.restore()
 }
 
 function drawHand(ctx, s) {
   ctx.save()
   ctx.translate(s.x, s.y)
-  // Estela roja
-  ctx.fillStyle = 'rgba(255, 60, 40, 0.5)'
-  ctx.fillRect(2, -2, 26, 4)
+  ctx.fillStyle = 'rgba(255, 60, 40, 0.45)'
+  ctx.fillRect(4, -3, 40, 6)
   ctx.fillStyle = '#1a0d2e'
   ctx.beginPath()
-  ctx.moveTo(-13, 0); ctx.lineTo(5, -6); ctx.lineTo(5, 6)
+  ctx.moveTo(-22, 0); ctx.lineTo(9, -10); ctx.lineTo(9, 10)
   ctx.closePath(); ctx.fill()
   ctx.fillStyle = '#ffc93c'
   ctx.beginPath()
-  ctx.moveTo(-10, 0); ctx.lineTo(4, -4); ctx.lineTo(4, 4)
+  ctx.moveTo(-18, 0); ctx.lineTo(7, -7); ctx.lineTo(7, 7)
   ctx.closePath(); ctx.fill()
   ctx.fillStyle = '#fff3c4'
   ctx.beginPath()
-  ctx.moveTo(-9, 0); ctx.lineTo(1, -2); ctx.lineTo(1, 1)
+  ctx.moveTo(-15, 0); ctx.lineTo(2, -3); ctx.lineTo(2, 2)
   ctx.closePath(); ctx.fill()
   ctx.restore()
 }

@@ -5,8 +5,8 @@ import {
   submitScore, getPlayerName, setPlayerName,
 } from './leaderboard'
 import {
-  ENEMY_BY_THEME, ENEMY_META, createEnemy, updateEnemy, startExit, enemyGone,
-  updateShots, shotHits, drawEnemy, drawShots,
+  ENEMY_BY_THEME, ENEMY_META, BOSS_REWARD, createEnemy, updateEnemy, startExit,
+  enemyGone, updateShots, shotHits, drawEnemy, drawShots,
 } from './enemies'
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -51,8 +51,10 @@ const QUERY = typeof location !== 'undefined' ? new URLSearchParams(location.sea
 const DEBUG = QUERY.has('debug')
 const DEBUG_GOD = DEBUG && QUERY.has('god')         // ?debug&god: sin colisiones
 const DEBUG_SKIP = DEBUG ? Number(QUERY.get('skip')) || 0 : 0  // ?debug&skip=10 salta al tema siguiente
-// ?debug&enemy=denibot | clocktitan: trae un enemigo ya, sin llegar a su tema
+// ?debug&enemy=denibot | clocktitan: arranca directo en el encuentro con ese enemigo
 const DEBUG_ENEMY = DEBUG && ENEMY_META[QUERY.get('enemy')] ? QUERY.get('enemy') : null
+// ?debug&hitbox: dibuja los círculos y rectángulos de colisión (los verdes)
+const DEBUG_HITBOX = DEBUG && QUERY.has('hitbox')
 
 function hitCircles(char, x, y, vel) {
   const a = Math.min(Math.max(vel, -5), 5) * TILT[char]
@@ -954,7 +956,9 @@ export default function FlappyBird() {
     flashTimer: 0,
     deadTimer: 0,
     scoreSent: false,
-    enemy: null,
+    mode: DEBUG_ENEMY ? 'boss' : 'columns',   // 'columns' | 'boss'
+    bossCycle: 0,
+    enemy: DEBUG_ENEMY ? createEnemy(DEBUG_ENEMY, 0) : null,
     shots: [],
     scored: new Set(),
     pipeCount: DEBUG_SKIP,
@@ -1122,8 +1126,9 @@ export default function FlappyBird() {
         s.birdVel += GRAVITY
         s.birdY += s.birdVel
 
-        pipeTimerRef.current += dt
-        if (pipeTimerRef.current >= PIPE_INTERVAL) {
+        // Durante un encuentro no salen columnas: las que quedan se van solas.
+        if (s.mode === 'columns') pipeTimerRef.current += dt
+        if (s.mode === 'columns' && pipeTimerRef.current >= PIPE_INTERVAL) {
           const np = spawnPipe(s.pipeCount + 1)
           np.n = ++s.pipeCount
           np.theme = Math.floor((np.n - 1) / THEME_EVERY) % THEME_COUNT
@@ -1140,16 +1145,22 @@ export default function FlappyBird() {
         s.pipes.forEach(p => { p.x -= speed; updateSlide(p, dt) })
         s.pipes = s.pipes.filter(p => p.x > -80)
 
-        // ── Enemigos ──
-        // Cada tema trae el suyo; el de edificios no tiene y sirve de respiro.
-        const wantEnemy = DEBUG_ENEMY
-          || ENEMY_BY_THEME[Math.floor(s.score / THEME_EVERY) % THEME_COUNT]
-          || null
-        if (s.enemy && s.enemy.id !== wantEnemy) startExit(s.enemy)
-        if (!s.enemy && wantEnemy) s.enemy = createEnemy(wantEnemy)
+        // ── Encuentro con enemigo ──
         if (s.enemy) {
-          s.shots.push(...updateEnemy(s.enemy, dt, s.birdY))
-          if (enemyGone(s.enemy)) s.enemy = wantEnemy ? createEnemy(wantEnemy) : null
+          const volley = updateEnemy(s.enemy, dt, s.birdY)
+          s.shots.push(...volley.shots)
+          if (volley.done) startExit(s.enemy)
+          if (enemyGone(s.enemy)) {
+            s.enemy = null
+            s.mode = 'columns'
+            s.bossCycle++
+            s.score += BOSS_REWARD
+            if (s.score > s.best) {
+              s.best = s.score
+              localStorage.setItem('fb_best', s.best)
+            }
+            pipeTimerRef.current = PIPE_INTERVAL   // la primera columna vuelve enseguida
+          }
         }
         s.shots = updateShots(s.shots, dt)
 
@@ -1179,6 +1190,13 @@ export default function FlappyBird() {
             if (s.score > s.best) {
               s.best = s.score
               localStorage.setItem('fb_best', s.best)
+            }
+
+            // Última columna de una tanda con enemigo: arranca el encuentro.
+            const bossId = p.n % THEME_EVERY === 0 ? ENEMY_BY_THEME[p.theme] : null
+            if (bossId && s.mode === 'columns') {
+              s.mode = 'boss'
+              s.enemy = createEnemy(bossId, s.bossCycle)
             }
           }
         })
@@ -1353,7 +1371,7 @@ export default function FlappyBird() {
         drawScore(ctx, s.score)
       }
 
-      if (DEBUG) {
+      if (DEBUG_HITBOX) {
         ctx.strokeStyle = '#00ff66'
         ctx.lineWidth = 1
         hitCircles(s.character, BIRD_X, s.birdY, s.birdVel).forEach(c => {
