@@ -43,16 +43,18 @@ export const ENEMY_META = {
 export const BOSS_MS = 7500
 export const BOSS_REWARD = 10
 
-const SCALE = 0.95          // 200px de origen -> 190px en pantalla
-const HOME_X = 228
+const SCALE = 0.9           // 200px de origen -> 180px en pantalla
+const HOME_X = 240          // bien a la derecha: deja pista para ver venir el tiro
 const HOME_Y = 236
 const SLIDE_MS = 850
 const CHARGE_MS = 520       // aviso antes de cada andanada
 
 // Proyectiles grandes y lentos: se esquivan leyendo la trayectoria, no de reflejo.
+// Con el jugador en x=72 y el disparo saliendo en x~270, el papel tarda ~2 s en
+// llegar y la aguja ~1,6 s. Ese es el margen para maniobrar.
 const SHOTS = {
-  paper: { speed: 104, r: 13, wobble: 30, spin: 0.0028, size: 26 },
-  hand:  { speed: 158, r: 11, wobble: 0, spin: 0, size: 24 },
+  paper: { speed: 96, r: 13, wobble: 30, spin: 0.0028, size: 26 },
+  hand:  { speed: 126, r: 11, wobble: 0, spin: 0, size: 24 },
 }
 
 // Franja jugable donde se reparten los carriles de la andanada.
@@ -134,7 +136,7 @@ export function updateEnemy(e, dt, targetY) {
       shots.push({
         kind: meta.shot,
         mul: speedMul(e),
-        x: p.x - 62,
+        x: p.x + 30,
         y: p.y - 10,
         baseY: p.y - 10,
         aimY: LANE_LO + slotH * (i + 0.5),
@@ -165,7 +167,8 @@ export function updateShots(list, dt) {
     s.travelled += step
     s.rot += cfg.spin * dt
 
-    const k = Math.min(1, s.travelled / 260)
+    // Se acomoda rápido en su carril: hay que poder leer adónde va desde lejos.
+    const k = Math.min(1, s.travelled / 120)
     s.y = s.baseY + (s.aimY - s.baseY) * easeOut(k)
     if (cfg.wobble) s.y += Math.sin(s.travelled / 38) * cfg.wobble * (1 - k * 0.55)
 

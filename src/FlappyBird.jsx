@@ -1197,6 +1197,12 @@ export default function FlappyBird() {
             if (bossId && s.mode === 'columns') {
               s.mode = 'boss'
               s.enemy = createEnemy(bossId, s.bossCycle)
+              // La siguiente columna ya venía en camino: se va deslizándose en
+              // vez de quedar cruzada en medio del encuentro. slideOffsets()
+              // mueve también su colisión, así que deja de estorbar.
+              // Arranca la salida avanzada porque easeIn empieza muy lento y la
+              // columna llegaría al jugador antes de haberse apartado.
+              s.pipes.forEach(o => { o.exiting = true; o.exitT = Math.max(o.exitT, 0.7) })
             }
           }
         })
