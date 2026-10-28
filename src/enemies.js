@@ -154,26 +154,26 @@ export function updateEnemy(e, dt, targetY) {
       r: SHOTS[meta.shot].r,
     })
 
-    if (n === 1) {
-      // Un solo proyectil: va al centro de la franja donde estás. Son tres
-      // franjas anchas y bien separadas (113 px entre centros), así que
-      // esquivar es cambiarse de franja, no ajustar por unos píxeles.
-      const bands = 3
-      const bandH = (LANE_HI - LANE_LO) / bands
-      const here = Math.max(0, Math.min(bands - 1, Math.floor((targetY - LANE_LO) / bandH)))
-      fire(LANE_LO + bandH * (here + 0.5))
-    } else {
-      // Varios: cubren todos los carriles menos uno, y ese hueco nunca cae en el
-      // carril donde ya estás.
-      const slots = n + 1
-      const slotH = (LANE_HI - LANE_LO) / slots
-      const here = Math.max(0, Math.min(slots - 1, Math.floor((targetY - LANE_LO) / slotH)))
-      let gap = Math.floor(Math.random() * slots)
-      if (gap === here) gap = (here + 1 + Math.floor(Math.random() * (slots - 1))) % slots
-      for (let i = 0; i < slots; i++) {
-        if (i !== gap) fire(LANE_LO + slotH * (i + 0.5))
+    // Franja donde está el jugador: siempre recibe un proyectil, así que
+    // quedarse quieto nunca es la respuesta.
+    const bands = n === 1 ? 3 : 5
+    const bandH = (LANE_HI - LANE_LO) / bands
+    const here = Math.max(0, Math.min(bands - 1, Math.floor((targetY - LANE_LO) / bandH)))
+
+    // Los demás van a franjas separadas por al menos dos posiciones (136 px).
+    // Como las franjas pegadas a una elegida nunca se usan, siempre queda una
+    // salida libre a 68 px de donde estás.
+    const chosen = [here]
+    while (chosen.length < n) {
+      const free = []
+      for (let i = 0; i < bands; i++) {
+        if (chosen.every(c => Math.abs(i - c) >= 2)) free.push(i)
       }
+      if (!free.length) break
+      chosen.push(free[Math.floor(Math.random() * free.length)])
     }
+
+    chosen.forEach(i => fire(LANE_LO + bandH * (i + 0.5)))
   }
 
   return { shots, done: e.fightMs >= BOSS_MS }
