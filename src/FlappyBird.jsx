@@ -4,6 +4,10 @@ import {
   MAX_NAME, normalizeName, getScores, topScores, rankOf,
   submitScore, getPlayerName, setPlayerName,
 } from './leaderboard'
+import {
+  ENEMY_BY_THEME, ENEMY_META, createEnemy, updateEnemy, startExit, enemyGone,
+  updateShots, shotHits, drawEnemy, drawShots,
+} from './enemies'
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const W = 320
@@ -47,6 +51,8 @@ const QUERY = typeof location !== 'undefined' ? new URLSearchParams(location.sea
 const DEBUG = QUERY.has('debug')
 const DEBUG_GOD = DEBUG && QUERY.has('god')         // ?debug&god: sin colisiones
 const DEBUG_SKIP = DEBUG ? Number(QUERY.get('skip')) || 0 : 0  // ?debug&skip=10 salta al tema siguiente
+// ?debug&enemy=denibot | clocktitan: trae un enemigo ya, sin llegar a su tema
+const DEBUG_ENEMY = DEBUG && ENEMY_META[QUERY.get('enemy')] ? QUERY.get('enemy') : null
 
 function hitCircles(char, x, y, vel) {
   const a = Math.min(Math.max(vel, -5), 5) * TILT[char]
@@ -948,6 +954,8 @@ export default function FlappyBird() {
     flashTimer: 0,
     deadTimer: 0,
     scoreSent: false,
+    enemy: null,
+    shots: [],
     scored: new Set(),
     pipeCount: DEBUG_SKIP,
     bgX: 0,
@@ -1015,9 +1023,11 @@ export default function FlappyBird() {
     const paths = {
       bird:      '/assets/retro/girl.png',
       logo:      '/assets/retro/logo_banner.png',
-      scarlet:   HERO_META.scarlet.src,
-      aegis:     HERO_META.aegis.src,
-      tempest:   HERO_META.tempest.src,
+      scarlet:    HERO_META.scarlet.src,
+      aegis:      HERO_META.aegis.src,
+      tempest:    HERO_META.tempest.src,
+      denibot:    ENEMY_META.denibot.src,
+      clocktitan: ENEMY_META.clocktitan.src,
     }
     const keys = Object.keys(paths)
     keys.forEach(async (k) => {
@@ -1130,6 +1140,19 @@ export default function FlappyBird() {
         s.pipes.forEach(p => { p.x -= speed; updateSlide(p, dt) })
         s.pipes = s.pipes.filter(p => p.x > -80)
 
+        // ── Enemigos ──
+        // Cada tema trae el suyo; el de edificios no tiene y sirve de respiro.
+        const wantEnemy = DEBUG_ENEMY
+          || ENEMY_BY_THEME[Math.floor(s.score / THEME_EVERY) % THEME_COUNT]
+          || null
+        if (s.enemy && s.enemy.id !== wantEnemy) startExit(s.enemy)
+        if (!s.enemy && wantEnemy) s.enemy = createEnemy(wantEnemy)
+        if (s.enemy) {
+          s.shots.push(...updateEnemy(s.enemy, dt, s.birdY))
+          if (enemyGone(s.enemy)) s.enemy = wantEnemy ? createEnemy(wantEnemy) : null
+        }
+        s.shots = updateShots(s.shots, dt)
+
         const hc = hitCircles(s.character, BIRD_X, s.birdY, s.birdVel)
         s.pipes.forEach(p => {
           const ballX = p.x + 5 + PIPE_W / 2
@@ -1177,6 +1200,12 @@ export default function FlappyBird() {
             s.phase = 'dead'
             s.birdVel = JUMP_VEL * 0.4
           }
+        }
+
+        // Un proyectil enemigo mata igual que un obstáculo.
+        if (!DEBUG_GOD && s.phase === 'playing' && shotHits(s.shots, hc)) {
+          s.phase = 'dead'
+          s.birdVel = JUMP_VEL * 0.4
         }
       }
 
@@ -1271,6 +1300,9 @@ export default function FlappyBird() {
       ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0)
       drawBackground(ctx, s.clouds, imgs, s.fireworksTimer > 0, s.bgX)
 
+      // El enemigo va en el fondo, detrás de los obstáculos.
+      if (s.enemy) drawEnemy(ctx, imgs[s.enemy.id], s.enemy)
+
       if (s.particles && s.particles.length > 0) {
         s.particles.forEach(p => {
           ctx.globalAlpha = Math.max(0, p.life)
@@ -1298,6 +1330,9 @@ export default function FlappyBird() {
         drawBuilding(ctx, imgs, p)
         if (!p.collected) drawBall(ctx, p.x + 5 + PIPE_W / 2, p.topH + p.gap / 2, p.n, BALL_COLORS[p.ballColor])
       })
+
+      // Los proyectiles van adelante de los obstáculos, para que se vean bien.
+      drawShots(ctx, s.shots)
 
       ctx.save()
       if (s.rainbowBirdTimer && s.rainbowBirdTimer > 0) {
