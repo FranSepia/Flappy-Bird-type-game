@@ -979,7 +979,9 @@ export default function FlappyBird() {
     const CAP_W = PIPE_W + 10
 
     // Suelo / techo
-    if (circles.some(c => c.y - c.r <= 0 || c.y + c.r >= GROUND_Y)) return { hit: true, type: 'normal' }
+    // La banda del suelo es decorado: se puede volar por encima. Solo mata el
+    // borde de abajo de la pantalla (y el techo).
+    if (circles.some(c => c.y - c.r <= 0 || c.y + c.r >= H)) return { hit: true, type: 'normal' }
 
     for (const p of pipes) {
       const bodyX = p.x + 5
@@ -1133,6 +1135,11 @@ export default function FlappyBird() {
           np.n = ++s.pipeCount
           np.theme = Math.floor((np.n - 1) / THEME_EVERY) % THEME_COUNT
           np.ballColor = Math.floor(Math.random() * BALL_COLORS.length)
+          // La bolita muestra el puntaje con el que vas a quedar al agarrarla,
+          // no el número de columna: así después de un enemigo sigue la cuenta
+          // del score (que subió 10) en vez de volver al número viejo. Hay que
+          // sumar las que ya están en pantalla sin cobrar, porque van antes.
+          np.label = s.score + s.pipes.filter(o => !o.collected).length + 1
           if (np.n > 1 && (np.n - 1) % THEME_EVERY === 0) {
             // Cambio de tema: los actuales se van y el nuevo entra
             s.pipes.forEach(o => { o.exiting = true })
@@ -1258,7 +1265,7 @@ export default function FlappyBird() {
         }
         if (!s.isHidden) {
           s.birdVel += GRAVITY
-          s.birdY = Math.min(s.birdY + s.birdVel, GROUND_Y - 24)
+          s.birdY = Math.min(s.birdY + s.birdVel, H - 24)
         }
       }
 
@@ -1353,7 +1360,7 @@ export default function FlappyBird() {
 
       s.pipes.forEach(p => {
         drawBuilding(ctx, imgs, p)
-        if (!p.collected) drawBall(ctx, p.x + 5 + PIPE_W / 2, p.topH + p.gap / 2, p.n, BALL_COLORS[p.ballColor])
+        if (!p.collected) drawBall(ctx, p.x + 5 + PIPE_W / 2, p.topH + p.gap / 2, p.label, BALL_COLORS[p.ballColor])
       })
 
       // Los proyectiles van adelante de los obstáculos, para que se vean bien.

@@ -18,6 +18,11 @@ export const ENEMY_BY_THEME = {
   2: 'clocktitan',   // reloj
 }
 
+// footDy y legs salen de medir los PNG, no de estimarlos: los sprites tienen
+// relleno transparente abajo, así que el contenido no llega al borde de la
+// imagen y los pies caen bastante más arriba de lo que uno supondría.
+// footDy = distancia del centro del sprite a la planta de los pies, en px de
+// juego. legs = centro y ancho de cada pata, también en px de juego.
 export const ENEMY_META = {
   denibot: {
     name: 'DENI-BOT',
@@ -27,6 +32,8 @@ export const ENEMY_META = {
     volleyMs: 1250,
     glow: '#ff3b3b',
     jet: ['#ff5a3c', '#ffd06a'],
+    footDy: 61,
+    legs: [{ dx: -9, w: 40 }, { dx: 60, w: 32 }],
   },
   clocktitan: {
     name: 'CLOCKTITAN',
@@ -36,6 +43,8 @@ export const ENEMY_META = {
     volleyMs: 1450,
     glow: '#ffb021',
     jet: ['#ffb021', '#fff0b0'],
+    footDy: 55,
+    legs: [{ dx: -6, w: 42 }, { dx: 52, w: 32 }],
   },
 }
 
@@ -50,7 +59,6 @@ const HOME_X = 240          // bien a la derecha: deja pista para ver venir el t
 // abajo. La grilla se dibuja en y = GROUND_Y + GROUND_H * (i/5)^2, o sea en
 // 460, 474, 496, 528 y 568; la segunda desde abajo es 496.
 const FOOT_Y = 496
-const HOME_Y = FOOT_Y - (200 * SCALE) / 2
 const SLIDE_MS = 850
 const CHARGE_MS = 520       // aviso antes de cada andanada
 
@@ -83,10 +91,13 @@ export function createEnemy(id, cycle = 0) {
 }
 
 export function enemyPos(e) {
+  // El centro se despeja desde la planta de los pies, que es lo que tiene que
+  // caer sobre la línea de la grilla.
+  const homeY = FOOT_Y - ENEMY_META[e.id].footDy
   return {
     x: HOME_X + e.slide * (W + 150 - HOME_X),
     // Apoyado en el suelo, así que apenas respira en lugar de flotar.
-    y: HOME_Y + Math.sin(e.t / 540) * 3,
+    y: homeY + Math.sin(e.t / 540) * 3,
   }
 }
 
@@ -129,7 +140,7 @@ export function updateEnemy(e, dt, targetY) {
     e.charge = 0
     const p = enemyPos(e)
     const n = volleySize(e)
-    const launchY = p.y - 46        // a la altura del brazo, no de los pies
+    const launchY = p.y - 30        // a la altura del brazo, no de los pies
 
     const fire = (aimY) => shots.push({
       kind: meta.shot,
@@ -199,31 +210,34 @@ export function shotHits(list, circles) {
   return false
 }
 
-// Escapes a la altura de los pies. Ya no son propulsores de vuelo: ahora el
-// enemigo apoya en el suelo, así que son venteos cortos que delatan la máquina.
-function drawJets(ctx, e, p, h) {
-  const [hot, core] = ENEMY_META[e.id].jet
-  const baseY = p.y + h * 0.44
-  ctx.save()
-  for (const dx of [-34, 34]) {
-    const flick = 0.6 + Math.sin(e.t / 42 + dx) * 0.4
-    const len = 11 * flick
-    const x = p.x + dx
+// Venteos bajo cada pata. Las posiciones salen de medir el sprite, así que
+// quedan calzados con las patas de cada enemigo y no a ojo.
+function drawJets(ctx, e, p) {
+  const meta = ENEMY_META[e.id]
+  const [hot, core] = meta.jet
+  const baseY = p.y + meta.footDy - 2
 
-    ctx.globalAlpha = 0.38
+  ctx.save()
+  for (const leg of meta.legs) {
+    const flick = 0.6 + Math.sin(e.t / 42 + leg.dx) * 0.4
+    const len = 10 * flick
+    const x = p.x + leg.dx
+    const half = leg.w / 2
+
+    ctx.globalAlpha = 0.35
     ctx.fillStyle = hot
     ctx.beginPath()
-    ctx.moveTo(x - 11, baseY)
-    ctx.lineTo(x + 11, baseY)
+    ctx.moveTo(x - half, baseY)
+    ctx.lineTo(x + half, baseY)
     ctx.lineTo(x, baseY + len)
     ctx.closePath()
     ctx.fill()
 
-    ctx.globalAlpha = 0.8
+    ctx.globalAlpha = 0.75
     ctx.fillStyle = core
     ctx.beginPath()
-    ctx.moveTo(x - 5, baseY)
-    ctx.lineTo(x + 5, baseY)
+    ctx.moveTo(x - half * 0.45, baseY)
+    ctx.lineTo(x + half * 0.45, baseY)
     ctx.lineTo(x, baseY + len * 0.6)
     ctx.closePath()
     ctx.fill()
@@ -237,7 +251,7 @@ export function drawEnemy(ctx, img, e) {
   const w = img.width * SCALE
   const h = img.height * SCALE
 
-  drawJets(ctx, e, p, h)
+  drawJets(ctx, e, p)
 
   ctx.save()
   if (e.charge > 0) {
